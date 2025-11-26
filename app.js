@@ -1,7 +1,12 @@
-// TBW AI PREMIUM NAVIGATOR – FRONTEND
+// TBW AI PREMIUM NAVIGATOR – FRONTEND (FINAL)
 // Radi uz backend /api/tbw (tbw.js)
 
-const API_BASE = "/api/tbw";
+// Dinamički API base (Vercel + lokalno)
+const API_BASE =
+  window.API_BASE_OVERRIDE ||
+  (window.location.hostname === "localhost"
+    ? "http://localhost:3000/api/tbw"
+    : "/api/tbw");
 
 let currentCity = "Split";
 let tickerTimer = null;
@@ -42,7 +47,6 @@ async function callRoute(route, params = {}) {
 function speakOut(text) {
   if (!("speechSynthesis" in window)) return;
   const utter = new SpeechSynthesisUtterance(text);
-  // pokušaj na hr, fallback na default
   const voices = window.speechSynthesis.getVoices() || [];
   const hrVoice =
     voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("hr")) ||
@@ -72,7 +76,7 @@ function playIntroSequence() {
   }
 
   if (!hasShownFull) {
-    // Prvo pokretanje na ovom uređaju → FULL A (~4-5s)
+    // Prvo pokretanje → FULL intro
     fullIntro.classList.remove("hidden");
     setTimeout(() => {
       fullIntro.classList.add("hidden");
@@ -80,7 +84,7 @@ function playIntroSequence() {
       showMini();
     }, 4500);
   } else {
-    // Svaki idući start → C
+    // Svako sljedeće pokretanje → MINI intro
     showMini();
   }
 }
@@ -144,7 +148,6 @@ function showLocationModalOnce() {
       navigator.geolocation.getCurrentPosition(
         () => {
           // Ovdje bi išlo reverse geocoding → grad
-          // Za sada ostavljamo currentCity kakav jest.
         },
         () => {}
       );
@@ -225,8 +228,7 @@ async function updateTicker() {
 function startTicker() {
   if (tickerTimer) clearInterval(tickerTimer);
   updateTicker();
-  // 69 s refresh, kako si tražio
-  tickerTimer = setInterval(updateTicker, 69 * 1000);
+  tickerTimer = setInterval(updateTicker, 69 * 1000); // tvoj zahtjev
 }
 
 // ---------------------------------------------
@@ -491,25 +493,12 @@ async function loadBooking() {
     } else {
       setText(
         "booking-status",
-        "Za više opcija otvorit ćeš Booking, Airbnb ili druge servise."
+        "Za više opcija otvorit ćeš Booking ili druge servise."
       );
     }
   } catch (e) {
     console.error("booking", e);
     setText("booking-status", "Greška pri dohvaćanju ponuda.");
-  }
-}
-
-// livecam za header → ali sada koristimo hero-image; ovo je fallback ako želiš YouTube
-async function loadLivecam() {
-  try {
-    const data = await callRoute("livecam", { mode: "sea" });
-    const frame = document.getElementById("livecam-frame");
-    if (frame && data.url) {
-      frame.src = data.url;
-    }
-  } catch (e) {
-    console.error("livecam", e);
   }
 }
 
@@ -547,7 +536,7 @@ async function loadPremium() {
 }
 
 // ---------------------------------------------
-// SIGURNOST & SOS (localStorage konfiguracija)
+// SIGURNOST & SOS
 // ---------------------------------------------
 const SOS_KEY = "tbw_sos_profile";
 const ICE_KEY = "tbw_ice_contacts";
@@ -556,7 +545,6 @@ function loadSafetyPanel() {
   const sosSummary = document.getElementById("sos-summary");
   const iceList = document.getElementById("ice-list");
 
-  // SOS profil
   const rawSos = localStorage.getItem(SOS_KEY);
   if (rawSos && sosSummary) {
     try {
@@ -575,7 +563,6 @@ function loadSafetyPanel() {
     sosSummary.textContent = "Nije postavljen.";
   }
 
-  // ICE kontakti
   if (iceList) {
     iceList.innerHTML = "";
     const rawIce = localStorage.getItem(ICE_KEY);
@@ -654,7 +641,6 @@ function detectRegionEmergencyNumber() {
   ) {
     return "911";
   }
-  // default EU stil
   return "112";
 }
 
@@ -707,7 +693,6 @@ function setupRouteForm() {
 // PRETRAGA + GLAS – AI NAVIGATOR
 // ---------------------------------------------
 function parseCityFromQuery(query) {
-  // probaj "u Zadru", "za Zagreb", "prema Splitu"
   let m =
     query.match(/\b(u|za|prema)\s+([A-ZČĆŠĐŽ][A-Za-zČĆŠĐŽčćšđž]+)\b/) ||
     query.match(/\b([A-ZČĆŠĐŽ][A-Za-zČĆŠĐŽčćšđž]+)\b$/);
@@ -803,7 +788,7 @@ async function handleAiQuery(query, options = {}) {
     return;
   }
 
-  // PARCIJALNO DOHVAĆANJE PODATAKA
+  // Povuci potrebne podatke
   const tasks = [];
 
   if (intents.includes("weather")) tasks.push(loadWeather());
@@ -813,7 +798,6 @@ async function handleAiQuery(query, options = {}) {
   if (intents.includes("booking")) tasks.push(loadBooking());
   if (intents.includes("truck")) tasks.push(loadTruck());
 
-  // Ako je nav/route → izračunaj rutu (currentCity -> destinationCity)
   let routeData = null;
   if (intents.includes("route") || intents.includes("traffic")) {
     try {
@@ -839,14 +823,18 @@ async function handleAiQuery(query, options = {}) {
   await Promise.allSettled(tasks);
 
   // SASTAVI ODGOVOR
-
   if (intents.includes("traffic")) {
     const trafficCard = document.getElementById("traffic-status");
     const levelEl = document.getElementById("traffic-level");
     const tStatus = trafficCard ? trafficCard.textContent : "";
     const tLevel = levelEl ? levelEl.textContent : "";
     let part = `Prema ${destinationCity} promet je: ${tStatus.toLowerCase()}.`;
-    if (tLevel) part += ` Trenutna prosječna brzina je ${tLevel.replace("Brzina: ", "")}.`;
+    if (tLevel) {
+      part += ` Trenutna prosječna brzina je ${tLevel.replace(
+        "Brzina: ",
+        ""
+      )}.`;
+    }
     if (routeData && routeData.duration) {
       part += ` Po tvojoj ruti, put će trajati otprilike ${routeData.duration}.`;
     }
@@ -875,7 +863,8 @@ async function handleAiQuery(query, options = {}) {
   }
 
   if (intents.includes("booking")) {
-    const bCity = document.getElementById("booking-city")?.textContent || destinationCity;
+    const bCity =
+      document.getElementById("booking-city")?.textContent || destinationCity;
     const bookingUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(
       bCity
     )}`;
@@ -898,7 +887,6 @@ async function handleAiQuery(query, options = {}) {
   }
 
   const finalText = responses.join(" ");
-
   setText("nav-ai-response", finalText);
   if (speak && finalText) speakOut(finalText);
 }
@@ -908,7 +896,6 @@ async function handleUserQuery(rawQuery, options = {}) {
   if (!rawQuery || !rawQuery.trim()) return;
   const q = rawQuery.trim();
 
-  // odredi grad ako se spominje
   const possibleCity = parseCityFromQuery(q);
   if (possibleCity && possibleCity !== currentCity) {
     currentCity = possibleCity;
@@ -944,7 +931,7 @@ function setupSearch() {
   }
 }
 
-// VOICE / "Hey TBW" – kontinuirano dok ne klikneš opet
+// VOICE – kontinuirano dok ne klikneš opet
 function setupVoice() {
   const micBtn = document.getElementById("mic-btn");
   if (!micBtn) return;
@@ -977,7 +964,6 @@ function setupVoice() {
 
   recognition.addEventListener("end", () => {
     if (micActive) {
-      // ponovno pokreni za kontinuirano slušanje
       try {
         recognition.start();
       } catch (e) {
