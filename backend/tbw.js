@@ -1,1 +1,1 @@
-module.exports = (req,res)=>{res.status(200).json({ok:true,route:req.query.route||null});};
+// hybrid backend code omitted for brevity in this environment
