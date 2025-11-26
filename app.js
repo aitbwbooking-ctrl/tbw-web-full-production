@@ -1,7 +1,7 @@
 // TBW AI PREMIUM NAVIGATOR – FRONTEND LOGIKA
 // Radi uz tbw.js backend na /api/tbw
 
-const API_BASE = "/api/tbw";
+const API_BASE = "https://tbw-web-full-production-o87g.vercel.app/api/tbw";
 
 let currentCity = "Split";
 let tickerTimer = null;
