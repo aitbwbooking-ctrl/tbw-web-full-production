@@ -1,1 +1,128 @@
-<!DOCTYPE html><html><body><h1>Admin panel placeholder</h1></body></html>
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+  <meta charset="UTF-8" />
+  <title>TBW Admin Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body { padding: 16px; }
+    .admin-card {
+      max-width: 600px;
+      margin: 0 auto;
+      background: #020617;
+      border-radius: 18px;
+      border: 1px solid rgba(148,163,184,.4);
+      padding: 16px;
+      box-shadow: 0 16px 40px rgba(15,23,42,.85);
+    }
+    .admin-row { margin-bottom: 10px; display:flex; gap:8px; }
+    .admin-row input {
+      flex:1;
+      border-radius: 999px;
+      border:1px solid rgba(148,163,184,.4);
+      background:#020617;
+      color:#e5e7eb;
+      padding:6px 10px;
+    }
+    .admin-output {
+      margin-top: 12px;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      color: #e5e7eb;
+      background: #020617;
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,.3);
+      padding: 10px;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body class="tbw-body">
+  <div class="admin-card">
+    <h1 style="margin:0 0 10px;font-size:1.1rem;">TBW Admin Panel</h1>
+    <p style="font-size:0.8rem;color:#9ca3af;margin:0 0 12px;">
+      Potrebno je unijeti <strong>TBW_ADMIN_TOKEN</strong> (isti kao u Vercel env).
+    </p>
+
+    <div class="admin-row">
+      <input id="admin-token" type="password" placeholder="TBW_ADMIN_TOKEN" />
+      <button id="btn-status" class="btn-primary small">Status</button>
+    </div>
+
+    <div class="admin-row">
+      <input id="premium-user-id" type="text" placeholder="userId za dodavanje u premium" />
+      <button id="btn-add-premium" class="btn-primary small">Add premium</button>
+      <button id="btn-rem-premium" class="btn-ghost small">Remove</button>
+    </div>
+
+    <div class="admin-row">
+      <input id="blocked-user-id" type="text" placeholder="userId za blokiranje" />
+      <button id="btn-add-blocked" class="btn-primary small">Block</button>
+      <button id="btn-rem-blocked" class="btn-ghost small">Unblock</button>
+    </div>
+
+    <div class="admin-row">
+      <select id="kill-value">
+        <option value="0">Kill switch OFF</option>
+        <option value="1">Kill switch ON</option>
+      </select>
+      <button id="btn-set-kill" class="btn-primary small">Spremi</button>
+    </div>
+
+    <div id="admin-output" class="admin-output">Output…</div>
+  </div>
+
+  <script>
+    const API_BASE = `${window.location.origin}/api/tbw`;
+
+    function adminCall(params) {
+      const url = new URL(API_BASE);
+      url.searchParams.set("route", "admin");
+      Object.keys(params).forEach((k) => url.searchParams.set(k, params[k]));
+      const token = document.getElementById("admin-token").value.trim();
+      const headers = token ? { "x-admin-token": token } : {};
+      return fetch(url.toString(), { headers }).then((r) => r.json());
+    }
+
+    function logOut(obj) {
+      document.getElementById("admin-output").textContent =
+        JSON.stringify(obj, null, 2);
+    }
+
+    document.getElementById("btn-status").onclick = async () => {
+      logOut(await adminCall({ action: "status" }));
+    };
+
+    document.getElementById("btn-set-kill").onclick = async () => {
+      const val = document.getElementById("kill-value").value;
+      logOut(await adminCall({ action: "setKill", value: val }));
+    };
+
+    document.getElementById("btn-add-premium").onclick = async () => {
+      const id = document.getElementById("premium-user-id").value.trim();
+      if (!id) return;
+      logOut(await adminCall({ action: "addPremium", userId: id }));
+    };
+
+    document.getElementById("btn-rem-premium").onclick = async () => {
+      const id = document.getElementById("premium-user-id").value.trim();
+      if (!id) return;
+      logOut(await adminCall({ action: "removePremium", userId: id }));
+    };
+
+    document.getElementById("btn-add-blocked").onclick = async () => {
+      const id = document.getElementById("blocked-user-id").value.trim();
+      if (!id) return;
+      logOut(await adminCall({ action: "addBlocked", userId: id }));
+    };
+
+    document.getElementById("btn-rem-blocked").onclick = async () => {
+      const id = document.getElementById("blocked-user-id").value.trim();
+      if (!id) return;
+      logOut(await adminCall({ action: "removeBlocked", userId: id }));
+    };
+  </script>
+</body>
+</html>
