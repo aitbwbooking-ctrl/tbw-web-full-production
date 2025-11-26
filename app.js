@@ -1,520 +1,629 @@
-// TBW AI PREMIUM NAVIGATOR – FRONTEND (D – neon dark)
+// TBW AI PREMIUM NAVIGATOR – FRONTEND LOGIKA
+// Radi uz tbw.js backend na /api/tbw
 
-// Backend base URL (Vercel)
-// Na produkciji radi kao /api/tbw na istom hostu.
-const API_BASE = `${window.location.origin}/api/tbw`;
+const API_BASE = "/api/tbw";
 
-// Global state
-const TBW_STATE = {
-  city: "Split",
-  userId: null,
-  premiumStatus: null
-};
+let currentCity = "Split";
+let tickerTimer = null;
+let micActive = false;
+let recognition = null;
 
-// Small helper
-function $(sel) {
-  return document.querySelector(sel);
+// ---------------------------------------------
+// POMOĆNE FUNKCIJE
+// ---------------------------------------------
+function $(selector) {
+  return document.querySelector(selector);
 }
 
-function speak(text) {
-  if (!("speechSynthesis" in window)) return;
-  try {
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "hr-HR";
-    window.speechSynthesis.speak(u);
-  } catch (e) {
-    // ignore
-  }
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
 }
 
-async function callApi(route, params = {}) {
-  const url = new URL(API_BASE);
+async function callRoute(route, params = {}) {
+  const url = new URL(API_BASE, window.location.origin);
   url.searchParams.set("route", route);
-  url.searchParams.set("city", TBW_STATE.city || "Split");
-  Object.keys(params).forEach((key) => {
-    if (params[key] !== undefined && params[key] !== null) {
-      url.searchParams.set(key, params[key]);
+
+  const city = params.city || currentCity;
+  if (city) url.searchParams.set("city", city);
+
+  Object.keys(params).forEach((k) => {
+    if (k !== "city" && params[k] != null) {
+      url.searchParams.set(k, params[k]);
     }
   });
 
-  const headers = {
-    "Content-Type": "application/json",
-    "x-user-id": TBW_STATE.userId || ""
-  };
-
-  try {
-    const res = await fetch(url.toString(), { headers });
-    if (!res.ok) {
-      console.error("API error", route, res.status);
-      return null;
-    }
-    return await res.json();
-  } catch (e) {
-    console.error("API fetch error", route, e);
-    return null;
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    throw new Error(`API ${route} error ${res.status}`);
   }
+  return res.json();
 }
 
-/* =========================
-   INIT
-   ========================= */
+// ---------------------------------------------
+// LEGAL OVERLAY + LOKACIJA
+// ---------------------------------------------
+function setupLegalOverlay() {
+  const overlay = document.getElementById("legal-overlay");
+  const chkTerms = document.getElementById("agree-terms");
+  const chkRobot = document.getElementById("agree-robot");
+  const btn = document.getElementById("legal-accept-btn");
 
-document.addEventListener("DOMContentLoaded", () => {
-  initUserId();
-  initLegalOverlay();
-  initLocationModal();
-  initSearchAndVoice();
-  initFullscreenCards();
+  if (!overlay || !chkTerms || !chkRobot || !btn) return;
 
-  const rememberedCity = localStorage.getItem("tbw_city");
-  if (rememberedCity) TBW_STATE.city = rememberedCity;
-
-  updateCityLabel();
-  refreshAll();
-  startTickerLoop();
-  loadPremiumStatus();
-});
-
-function initUserId() {
-  let id = localStorage.getItem("tbw_userId");
-  if (!id) {
-    id = "user-" + Math.random().toString(36).slice(2);
-    localStorage.setItem("tbw_userId", id);
-  }
-  TBW_STATE.userId = id;
-}
-
-/* =========================
-   LEGAL + LOCATION
-   ========================= */
-
-function initLegalOverlay() {
-  const overlay = $("#legal-overlay");
-  if (!overlay) return;
-
-  if (localStorage.getItem("tbw_legal_accepted") === "1") {
-    overlay.classList.add("hidden");
-    return;
-  }
-
-  const agreeTerms = $("#agree-terms");
-  const agreeRobot = $("#agree-robot");
-  const btn = $("#legal-accept-btn");
+  const accepted = localStorage.getItem("tbw_legal_accepted") === "1";
 
   function updateBtn() {
-    btn.disabled = !(agreeTerms.checked && agreeRobot.checked);
+    btn.disabled = !(chkTerms.checked && chkRobot.checked);
   }
 
-  agreeTerms.addEventListener("change", updateBtn);
-  agreeRobot.addEventListener("change", updateBtn);
+  chkTerms.addEventListener("change", updateBtn);
+  chkRobot.addEventListener("change", updateBtn);
 
   btn.addEventListener("click", () => {
-    if (btn.disabled) return;
     localStorage.setItem("tbw_legal_accepted", "1");
     overlay.classList.add("hidden");
-    showLocationModal();
+    showLocationModalOnce();
+    refreshCity(currentCity);
   });
+
+  if (accepted) {
+    overlay.classList.add("hidden");
+    refreshCity(currentCity);
+    showLocationModalOnce();
+  } else {
+    overlay.classList.remove("hidden");
+  }
 }
 
-function initLocationModal() {
-  const allowBtn = $("#location-allow");
-  const denyBtn = $("#location-deny");
-  const modal = $("#location-modal");
+function showLocationModalOnce() {
+  const modal = document.getElementById("location-modal");
   if (!modal) return;
 
-  allowBtn.addEventListener("click", () => {
-    modal.classList.add("hidden");
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        console.log("Lokacija", pos.coords);
-        speak("Lokacija je uključena. TBW navigator je spreman.");
-      },
-      () => {
-        console.warn("Geolocation odbijen ili greška");
-      }
-    );
-  });
+  const already = localStorage.getItem("tbw_loc_prompted") === "1";
+  if (already) return;
 
-  denyBtn.addEventListener("click", () => {
-    modal.classList.add("hidden");
-    speak("Lokacija je ostala isključena. Možeš ju kasnije uključiti u postavkama.");
-  });
-}
+  const allowBtn = document.getElementById("location-allow");
+  const denyBtn = document.getElementById("location-deny");
 
-function showLocationModal() {
-  const modal = $("#location-modal");
-  if (!modal) return;
   modal.classList.remove("hidden");
-}
 
-/* =========================
-   SEARCH + VOICE
-   ========================= */
-
-function initSearchAndVoice() {
-  const input = $("#search-input");
-  const btn = $("#search-btn");
-  const micBtn = $("#mic-btn");
-
-  btn.addEventListener("click", () => handleSearch(input.value));
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") handleSearch(input.value);
-  });
-
-  // Voice search (Web Speech API)
-  const SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    micBtn.style.display = "none";
-    return;
+  function close() {
+    modal.classList.add("hidden");
+    localStorage.setItem("tbw_loc_prompted", "1");
   }
 
-  const recognizer = new SpeechRecognition();
-  recognizer.continuous = false;
-  recognizer.interimResults = false;
-  recognizer.lang = "hr-HR";
-
-  let listening = false;
-
-  micBtn.addEventListener("click", () => {
-    if (!listening) {
-      listening = true;
-      micBtn.classList.add("listening");
-      try {
-        recognizer.start();
-      } catch {
-        listening = false;
-        micBtn.classList.remove("listening");
-      }
-    } else {
-      listening = false;
-      micBtn.classList.remove("listening");
-      recognizer.stop();
+  allowBtn.addEventListener("click", () => {
+    close();
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        () => {
+          // Ovdje bi išlo reverse geocoding → grad
+          // Za sada ostavljamo currentCity kakav jest.
+        },
+        () => {}
+      );
     }
   });
 
-  recognizer.addEventListener("result", (event) => {
-    const text = event.results[0][0].transcript.trim();
-    input.value = text;
-    listening = false;
-    micBtn.classList.remove("listening");
-    handleSearch(text, true);
-  });
-
-  recognizer.addEventListener("end", () => {
-    listening = false;
-    micBtn.classList.remove("listening");
-  });
+  denyBtn.addEventListener("click", close);
 }
 
-// crude city detection
-const KNOWN_CITIES = [
-  "Split",
-  "Zadar",
-  "Zagreb",
-  "Rijeka",
-  "Dubrovnik",
-  "Šibenik",
-  "Sibenik",
-  "Pula",
-  "Osijek",
-  "Trogir",
-  "Makarska"
-];
+// ---------------------------------------------
+// FULLSCREEN PROZORI
+// ---------------------------------------------
+function setupFullscreen() {
+  const overlay = document.getElementById("fullscreen-overlay");
+  const exitBtn = document.getElementById("fullscreen-exit");
+  const content = document.getElementById("fullscreen-content");
 
-function detectCity(text) {
-  if (!text) return null;
-  const lower = text.toLowerCase();
-  for (const c of KNOWN_CITIES) {
-    if (lower.includes(c.toLowerCase())) return c.replace("Sibenik", "Šibenik");
-  }
-  // fallback: last word
-  const parts = text.split(/\s+/);
-  const last = parts[parts.length - 1];
-  if (!last) return null;
-  const normalized = last[0].toUpperCase() + last.slice(1).toLowerCase();
-  return normalized;
-}
+  if (!overlay || !exitBtn || !content) return;
 
-function handleSearch(text, fromVoice = false) {
-  const trimmed = (text || "").trim();
-  if (!trimmed) return;
-
-  const city = detectCity(trimmed) || TBW_STATE.city || "Split";
-  TBW_STATE.city = city;
-  localStorage.setItem("tbw_city", city);
-  updateCityLabel();
-
-  speak(
-    `Prebacujem TBW navigator na grad ${city}. Sinkroniziram vrijeme, promet i usluge.`
-  );
-
-  refreshAll();
-
-  if (fromVoice) {
-    // eventualno dodatni odgovor kasnije (smještaj itd.)
-  }
-}
-
-function updateCityLabel() {
-  const el = $("#current-city");
-  if (el) el.textContent = TBW_STATE.city;
-}
-
-/* =========================
-   FULLSCREEN CARDS
-   ========================= */
-
-function initFullscreenCards() {
-  const overlay = $("#fullscreen-overlay");
-  const content = $("#fullscreen-content");
-  const exitBtn = $("#fullscreen-exit");
-
-  exitBtn.addEventListener("click", () => {
+  function closeFullscreen() {
     overlay.classList.add("hidden");
     content.innerHTML = "";
-  });
+  }
 
+  exitBtn.addEventListener("click", closeFullscreen);
+
+  // kartice
   document.querySelectorAll(".card-expand").forEach((btn) => {
     btn.addEventListener("click", () => {
       const card = btn.closest(".card");
       if (!card) return;
+      content.innerHTML = "";
       const clone = card.cloneNode(true);
       clone.querySelectorAll(".card-expand").forEach((b) => b.remove());
-      content.innerHTML = "";
       content.appendChild(clone);
       overlay.classList.remove("hidden");
     });
   });
 
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) {
-      overlay.classList.add("hidden");
+  // fullscreen kamere
+  const heroFullBtn = document.getElementById("hero-fullscreen");
+  const livecamFrame = document.getElementById("livecam-frame");
+
+  if (heroFullBtn && livecamFrame) {
+    heroFullBtn.addEventListener("click", () => {
       content.innerHTML = "";
-    }
-  });
-}
-
-/* =========================
-   DATA LOADERS
-   ========================= */
-
-async function refreshAll() {
-  loadHeroLivecam();
-  loadTicker(); // first tick
-  loadWeather();
-  loadSea();
-  loadTraffic();
-  loadAirport();
-  loadServices();
-  loadTransit();
-  loadLandmarks();
-  loadFood();
-  loadExtendedCity();
-  loadTruckInfo();
-}
-
-async function loadHeroLivecam() {
-  // hero images nisu bitne za prikaz, bitan je livecam
-  const live = await callApi("livecam", { mode: "sea" });
-  if (live && live.url) {
-    const frame = $("#livecam-frame");
-    if (frame) frame.src = live.url;
-  }
-
-  const heroBtn = $("#hero-fullscreen");
-  const frame = $("#livecam-frame");
-  const overlay = $("#fullscreen-overlay");
-  const content = $("#fullscreen-content");
-
-  if (heroBtn && frame) {
-    heroBtn.onclick = () => {
-      const clone = frame.cloneNode(true);
-      clone.style.height = "60vh";
-      clone.style.width = "100%";
-      content.innerHTML = "";
-      content.appendChild(clone);
+      const iframe = document.createElement("iframe");
+      iframe.src = livecamFrame.src;
+      iframe.className = "fullscreen-iframe";
+      iframe.allow =
+        "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+      iframe.allowFullscreen = true;
+      content.appendChild(iframe);
       overlay.classList.remove("hidden");
-    };
+    });
   }
 }
 
-async function loadWeather() {
-  const data = await callApi("weather");
-  $("#weather-temp").textContent =
-    data && typeof data.temp === "number" ? `${Math.round(data.temp)}°C` : "--°C";
-  $("#weather-cond").textContent =
-    data && data.condition ? data.condition : "Podaci trenutno nisu dostupni.";
+// ---------------------------------------------
+// TICKER
+// ---------------------------------------------
+async function updateTicker() {
+  const el = document.getElementById("ticker");
+  if (!el) return;
+
+  try {
+    const [alerts, traffic, sea, emergency] = await Promise.all([
+      callRoute("alerts"),
+      callRoute("traffic"),
+      callRoute("sea"),
+      callRoute("emergency"),
+    ]);
+
+    const parts = [];
+
+    if (alerts && alerts.alert) {
+      parts.push(`Upozorenje: ${alerts.alert}`);
+    }
+    if (traffic && traffic.status) {
+      parts.push(`Promet: ${traffic.status}`);
+    }
+    if (sea && sea.state) {
+      parts.push(`More: ${sea.state}`);
+    }
+    if (emergency && emergency.status) {
+      parts.push(`Sigurnost: ${emergency.status}`);
+    }
+
+    el.textContent =
+      parts.join(" • ") || "Nema posebnih upozorenja za ovo područje.";
+  } catch (e) {
+    console.error("Ticker error", e);
+    el.textContent = "Ne mogu dohvatiti obavijesti. Pokušaj kasnije.";
+  }
 }
 
-async function loadSea() {
-  const data = await callApi("sea");
-  $("#sea-state").textContent =
-    data && data.state ? data.state : "Nema podataka o moru.";
+function startTicker() {
+  if (tickerTimer) clearInterval(tickerTimer);
+  updateTicker();
+  tickerTimer = setInterval(updateTicker, 60 * 1000);
+}
+
+// ---------------------------------------------
+// PUNJENJE KARTICA
+// ---------------------------------------------
+async function loadWeather() {
+  try {
+    const data = await callRoute("weather");
+    setText("weather-temp", data.temp != null ? `${data.temp.toFixed(1)}°C` : "--°C");
+    setText(
+      "weather-cond",
+      data.condition ? data.condition : "Nema podataka."
+    );
+  } catch (e) {
+    console.error("weather", e);
+    setText("weather-cond", "Greška pri dohvaćanju vremena.");
+  }
 }
 
 async function loadTraffic() {
-  const data = await callApi("traffic");
-  $("#traffic-status").textContent =
-    data && data.status ? data.status : "Nema prometnih podataka.";
-  $("#traffic-level").textContent =
-    data && data.level != null ? `Brzina: ${data.level} km/h` : "";
+  try {
+    const data = await callRoute("traffic");
+    setText(
+      "traffic-status",
+      data.status ? data.status : "Nema podataka o prometu."
+    );
+    setText(
+      "traffic-level",
+      data.level != null ? `Brzina: ${data.level} km/h` : ""
+    );
+  } catch (e) {
+    console.error("traffic", e);
+    setText("traffic-status", "Greška pri dohvaćanju prometa.");
+  }
 }
 
-async function loadAirport() {
-  const data = await callApi("airport");
-  $("#airport-code").textContent = data && data.airport ? data.airport : "---";
-  $("#airport-status").textContent =
-    data && data.status ? data.status : "Podaci o letovima nisu dostupni.";
-}
-
-async function loadServices() {
-  const emergency = await callApi("emergency");
-  const services = await callApi("services");
-
-  $("#emergency-status").textContent =
-    emergency && emergency.status
-      ? emergency.status
-      : "Status sigurnosnih službi nije dostupan.";
-
-  const ul = $("#services-list");
-  if (!ul) return;
-  ul.innerHTML = "";
-  if (services && Array.isArray(services.list)) {
-    services.list.forEach((item) => {
-      const li = document.createElement("li");
-      li.textContent = item;
-      ul.appendChild(li);
-    });
+async function loadSea() {
+  try {
+    const data = await callRoute("sea");
+    setText("sea-state", data.state || "Nema podataka o moru.");
+  } catch (e) {
+    console.error("sea", e);
+    setText("sea-state", "Greška pri dohvaćanju stanja mora.");
   }
 }
 
 async function loadTransit() {
-  const data = await callApi("transit");
-  renderList("#transit-bus-list", data && data.bus, (b) =>
-    `Linija ${b.line}: ${b.from} → ${b.to} (za ${b.nextDepartureMinutes} min, kašnjenje ${b.delayMinutes} min)`
-  );
-  renderList("#transit-train-list", data && data.train, (t) =>
-    `${t.line}: ${t.from} → ${t.to} u ${t.departureTime} (+${t.delayMinutes} min)`
-  );
-  renderList("#transit-ferry-list", data && data.ferry, (f) =>
-    `${f.line}: ${f.from} → ${f.to} u ${f.departureTime} (+${f.delayMinutes} min)`
-  );
+  try {
+    const data = await callRoute("transit");
+    const busList = document.getElementById("transit-bus-list");
+    const trainList = document.getElementById("transit-train-list");
+    const ferryList = document.getElementById("transit-ferry-list");
+
+    if (busList) {
+      busList.innerHTML = "";
+      (data.bus || []).forEach((b) => {
+        const li = document.createElement("li");
+        li.textContent = `Linija ${b.line}: ${b.from} → ${b.to}, polazak za ${
+          b.nextDepartureMinutes
+        } min${b.delayMinutes ? ` (kašnjenje ${b.delayMinutes} min)` : ""}`;
+        busList.appendChild(li);
+      });
+    }
+
+    if (trainList) {
+      trainList.innerHTML = "";
+      (data.train || []).forEach((t) => {
+        const li = document.createElement("li");
+        li.textContent = `${t.line}: ${t.from} → ${t.to}, ${t.departureTime}${
+          t.delayMinutes ? ` (+${t.delayMinutes} min)` : ""
+        }`;
+        trainList.appendChild(li);
+      });
+    }
+
+    if (ferryList) {
+      ferryList.innerHTML = "";
+      (data.ferry || []).forEach((f) => {
+        const li = document.createElement("li");
+        li.textContent = `${f.line}: ${f.from} → ${f.to}, ${f.departureTime}${
+          f.delayMinutes ? ` (+${f.delayMinutes} min)` : ""
+        }`;
+        ferryList.appendChild(li);
+      });
+    }
+  } catch (e) {
+    console.error("transit", e);
+  }
+}
+
+async function loadAirport() {
+  try {
+    const data = await callRoute("airport");
+    setText("airport-code", data.airport || "---");
+    setText(
+      "airport-status",
+      data.status || "Nema podataka o letovima."
+    );
+  } catch (e) {
+    console.error("airport", e);
+    setText("airport-status", "Greška pri dohvaćanju letova.");
+  }
+}
+
+async function loadServices() {
+  try {
+    const [emerg, srv] = await Promise.all([
+      callRoute("emergency"),
+      callRoute("services"),
+    ]);
+
+    setText(
+      "emergency-status",
+      emerg.status || "Nema posebnih sigurnosnih informacija."
+    );
+
+    const list = document.getElementById("services-list");
+    if (list) {
+      list.innerHTML = "";
+      (srv.list || []).forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        list.appendChild(li);
+      });
+    }
+  } catch (e) {
+    console.error("services", e);
+  }
 }
 
 async function loadLandmarks() {
-  const data = await callApi("landmarks");
-  renderList("#landmarks-list", data && data.list, (x) => x);
+  try {
+    const data = await callRoute("landmarks");
+    const list = document.getElementById("landmarks-list");
+    if (list) {
+      list.innerHTML = "";
+      (data.list || []).forEach((name) => {
+        const li = document.createElement("li");
+        li.textContent = name;
+        list.appendChild(li);
+      });
+    }
+  } catch (e) {
+    console.error("landmarks", e);
+  }
 }
 
 async function loadFood() {
-  const data = await callApi("food");
-  renderList("#food-restaurants", data && data.restaurants, (x) => x);
-  renderList("#food-cafes", data && data.cafes, (x) => x);
-  renderList("#food-clubs", data && data.clubs, (x) => x);
+  try {
+    const data = await callRoute("food");
+
+    function fillList(id, arr) {
+      const ul = document.getElementById(id);
+      if (!ul) return;
+      ul.innerHTML = "";
+      (arr || []).forEach((x) => {
+        const li = document.createElement("li");
+        li.textContent = x;
+        ul.appendChild(li);
+      });
+    }
+
+    fillList("food-restaurants", data.restaurants);
+    fillList("food-cafes", data.cafes);
+    fillList("food-clubs", data.clubs);
+  } catch (e) {
+    console.error("food", e);
+  }
 }
 
 async function loadExtendedCity() {
-  const data = await callApi("extendedCity");
-  renderList("#shops-list", data && data.shops, (x) => x);
-  renderList("#malls-list", data && data.malls, (x) => x);
-  const fuelItems = [];
-  if (data && Array.isArray(data.fuel)) fuelItems.push(...data.fuel);
-  if (data && Array.isArray(data.ev)) fuelItems.push(...data.ev);
-  renderList("#fuel-ev-list", fuelItems, (x) => x);
+  try {
+    const data = await callRoute("extendedCity");
+
+    function fillList(id, arr) {
+      const ul = document.getElementById(id);
+      if (!ul) return;
+      ul.innerHTML = "";
+      (arr || []).forEach((x) => {
+        const li = document.createElement("li");
+        li.textContent = x;
+        ul.appendChild(li);
+      });
+    }
+
+    fillList("shops-list", data.shops);
+    fillList("malls-list", data.malls);
+    const fuelEv = [];
+    (data.fuel || []).forEach((f) => fuelEv.push(f));
+    (data.ev || []).forEach((e) => fuelEv.push(e));
+    fillList("fuel-ev-list", fuelEv);
+  } catch (e) {
+    console.error("extendedCity", e);
+  }
 }
 
-async function loadTruckInfo() {
-  const data = await callApi("truck", { season: "winter" });
-  $("#truck-info").textContent =
-    data && data.info ? data.info : "Podaci o kamionskim rutama nisu dostupni.";
-  renderList("#truck-restrictions", data && data.restrictions, (x) => x);
+async function loadTruck() {
+  try {
+    const data = await callRoute("truck", { season: "winter" });
+    setText("truck-info", data.info || "");
+    const ul = document.getElementById("truck-restrictions");
+    if (ul) {
+      ul.innerHTML = "";
+      (data.restrictions || []).forEach((r) => {
+        const li = document.createElement("li");
+        li.textContent = r;
+        ul.appendChild(li);
+      });
+    }
+  } catch (e) {
+    console.error("truck", e);
+  }
 }
 
-/* Route calc */
+async function loadRouteDefault() {
+  // ništa ne radi dok user ne unese rutu, ali osiguravamo prazan tekst
+  setText("route-result", "");
+}
 
-const routeForm = document.getElementById("route-form");
-if (routeForm) {
-  routeForm.addEventListener("submit", async (e) => {
+// livecam header
+async function loadLivecam() {
+  try {
+    const data = await callRoute("livecam", { mode: "sea" });
+    const frame = document.getElementById("livecam-frame");
+    if (frame && data.url) {
+      frame.src = data.url;
+    }
+  } catch (e) {
+    console.error("livecam", e);
+  }
+}
+
+// premium badge
+async function loadPremium() {
+  try {
+    const badge = document.getElementById("premium-badge");
+    if (!badge) return;
+
+    // jednostavan ID uređaja na bazi localStorage
+    let userId = localStorage.getItem("tbw_user_id");
+    if (!userId) {
+      userId = "user-" + Math.random().toString(36).slice(2);
+      localStorage.setItem("tbw_user_id", userId);
+    }
+
+    const url = new URL(API_BASE, window.location.origin);
+    url.searchParams.set("route", "premium");
+    url.searchParams.set("userId", userId);
+
+    const res = await fetch(url.toString());
+    if (!res.ok) throw new Error("premium error");
+    const data = await res.json();
+
+    if (data.status === "lifetime" || data.status === "premium") {
+      badge.textContent =
+        data.tier === "founder" ? "Founder premium" : "Premium";
+      badge.classList.add("premium-on");
+    } else {
+      badge.textContent = "Free mode";
+      badge.classList.remove("premium-on");
+    }
+  } catch (e) {
+    console.error("premium", e);
+  }
+}
+
+// ---------------------------------------------
+// RUTA FORM
+// ---------------------------------------------
+function setupRouteForm() {
+  const form = document.getElementById("route-form");
+  if (!form) return;
+
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const from = document.getElementById("route-from").value.trim();
     const to = document.getElementById("route-to").value.trim();
     const mode = document.getElementById("route-mode").value;
-    if (!from || !to) return;
-    const data = await callApi("route", { from, to, mode });
-    const el = document.getElementById("route-result");
-    if (!data || data.error) {
-      el.textContent = "Ruta nije mogla biti izračunata.";
+
+    if (!from || !to) {
+      setText("route-result", "Unesi polazak i odredište.");
       return;
     }
-    el.textContent = `${data.from} → ${data.to}: ${data.distance}, ${data.duration} (izvor: ${data.source})`;
+
+    try {
+      const data = await callRoute("route", { from, to, mode });
+      const text = `${data.from} → ${data.to}: ${data.distance} / ${data.duration} (${data.source})`;
+      setText("route-result", text);
+    } catch (err) {
+      console.error("route", err);
+      setText("route-result", "Greška pri računanju rute.");
+    }
   });
 }
 
-/* Premium badge */
+// ---------------------------------------------
+// PRETRAGA + GLAS
+// ---------------------------------------------
+function parseCityFromQuery(query) {
+  // vrlo jednostavan parser: traži "u Grad" ili zadnju riječ s velikim početnim slovom
+  let m = query.match(/\bu\s+([A-ZČĆŠĐŽ][A-Za-zČĆŠĐŽčćšđž]+)\b/);
+  if (m) return m[1];
 
-async function loadPremiumStatus() {
-  const data = await callApi("premium", { userId: TBW_STATE.userId });
-  TBW_STATE.premiumStatus = data;
-  const badge = $("#premium-badge");
-  if (!badge) return;
-  if (!data) {
-    badge.textContent = "Free mode";
-    return;
-  }
-  if (data.status === "lifetime" || data.tier === "founder") {
-    badge.textContent = "Founder premium";
-    badge.style.borderColor = "rgba(249, 115, 22, 0.8)";
-  } else if (data.status === "premium") {
-    badge.textContent = "Premium aktivan";
-  } else {
-    badge.textContent = "Free mode";
+  const words = query.split(/\s+/);
+  const candidates = words.filter(
+    (w) => /^[A-ZČĆŠĐŽ][A-Za-zČĆŠĐŽčćšđž]+$/.test(w)
+  );
+  if (candidates.length > 0) return candidates[candidates.length - 1];
+
+  return query.trim();
+}
+
+async function doSearchFromInput() {
+  const input = document.getElementById("search-input");
+  if (!input) return;
+  const q = input.value.trim();
+  if (!q) return;
+
+  const city = parseCityFromQuery(q);
+  await refreshCity(city);
+}
+
+function setupSearch() {
+  const btn = document.getElementById("search-btn");
+  const input = document.getElementById("search-input");
+
+  if (btn) btn.addEventListener("click", doSearchFromInput);
+  if (input) {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        doSearchFromInput();
+      }
+    });
   }
 }
 
-/* Ticker loop */
+function setupVoice() {
+  const micBtn = document.getElementById("mic-btn");
+  if (!micBtn) return;
 
-async function loadTicker() {
-  const [alerts, traffic, sea] = await Promise.all([
-    callApi("alerts"),
-    callApi("traffic"),
-    callApi("sea")
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    micBtn.disabled = true;
+    micBtn.title = "Glasovno pretraživanje nije podržano u ovom pregledniku.";
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.lang = "hr-HR";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.addEventListener("result", async (event) => {
+    const transcript =
+      event.results[0] && event.results[0][0]
+        ? event.results[0][0].transcript
+        : "";
+    const input = document.getElementById("search-input");
+    if (input) input.value = transcript;
+    await doSearchFromInput();
+  });
+
+  recognition.addEventListener("end", () => {
+    micActive = false;
+    micBtn.classList.remove("mic-on");
+  });
+
+  micBtn.addEventListener("click", () => {
+    if (micActive) {
+      recognition.stop();
+      micActive = false;
+      micBtn.classList.remove("mic-on");
+    } else {
+      micActive = true;
+      micBtn.classList.add("mic-on");
+      recognition.start();
+    }
+  });
+}
+
+// ---------------------------------------------
+// REFRESH SVEGA ZA GRAD
+// ---------------------------------------------
+async function refreshCity(city) {
+  if (!city) return;
+  currentCity = city;
+  setText("current-city", city);
+
+  await Promise.all([
+    loadWeather(),
+    loadTraffic(),
+    loadSea(),
+    loadTransit(),
+    loadAirport(),
+    loadServices(),
+    loadLandmarks(),
+    loadFood(),
+    loadExtendedCity(),
+    loadTruck(),
+    loadRouteDefault(),
+    loadLivecam(),
+    loadPremium(),
   ]);
 
-  const t = $("#ticker");
-  if (!t) return;
-
-  const parts = [];
-  if (traffic && traffic.status) parts.push(`Promet: ${traffic.status}`);
-  if (sea && sea.state) parts.push(`More: ${sea.state}`);
-  if (alerts && alerts.alert) parts.push(`Upozorenje: ${alerts.alert}`);
-
-  t.textContent = parts.length
-    ? parts.join("  •  ")
-    : "Nema posebnih upozorenja. Sretan put!";
+  startTicker();
 }
 
-function startTickerLoop() {
-  loadTicker();
-  setInterval(loadTicker, 60 * 1000);
-}
+// ---------------------------------------------
+// INIT
+// ---------------------------------------------
+document.addEventListener("DOMContentLoaded", () => {
+  setupLegalOverlay();
+  setupFullscreen();
+  setupRouteForm();
+  setupSearch();
+  setupVoice();
 
-/* Helpers */
-
-function renderList(selector, arr, mapFn) {
-  const el = document.querySelector(selector);
-  if (!el) return;
-  el.innerHTML = "";
-  if (!arr || !arr.length) {
-    const li = document.createElement("li");
-    li.textContent = "Nema podataka.";
-    el.appendChild(li);
-    return;
+  // ako je već prihvatio prije, legal overlay će odmah pozvati refreshCity
+  const accepted = localStorage.getItem("tbw_legal_accepted") === "1";
+  if (accepted) {
+    refreshCity(currentCity);
+    startTicker();
   }
-  arr.forEach((item) => {
-    const li = document.createElement("li");
-    li.textContent = mapFn(item);
-    el.appendChild(li);
-  });
-}
+});
