@@ -2,13 +2,14 @@
 // TBW AI PREMIUM NAVIGATOR – HYBRID BACKEND (Vercel)
 // =====================================================
 //
-// - Radi kao /api/tbw na Vercelu
-// - Koristi ugrađeni fetch (Node 18+) – ne treba node-fetch
-// - Kill switch + premium / blocked users + admin rute
-// - Hibridni skup API-ja (core + eventi / food / shops…)
+// Radi kao /api/tbw na Vercelu (Node 18+)
+// - globalni kill switch + premium / blocked users + admin panel
+// - više API-ja: OpenWeather, TomTom, AviationStack, OpenTripMap
+// - Booking V3 + V4 (scraper), Airbnb, Expedia
+// - demo livecam, truck, transit, city services, food, ...
 // =====================================================
 
-// -------- ENV VARS (podržava 2 naziva gdje imaš *_KEY i *_API_KEY) -----
+// -------- ENV VARS (podržava *_KEY i *_API_KEY nazive) -----
 
 function envOr() {
   for (var i = 0; i < arguments.length; i++) {
@@ -270,44 +271,217 @@ async function sea(city) {
 }
 
 // =====================================================
-// BOOKING – RapidAPI
+// BOOKING – V3 + V4 HIBRID
 // =====================================================
 
-async function booking(city) {
-  const cached = cacheGet("booking", { city: city });
+// V3 – globalni scraper + AI rank (samo search stranica)
+async function bookingV3(city) {
+  const searchUrl =
+    "https://www.booking.com/searchresults.html?ss=" +
+    encodeURIComponent(city) +
+    "&lang=hr";
+
+  const html = await fetch(searchUrl).then(function (r) { return r.text(); });
+
+  // CIJENE
+  var priceRegex = /€\s?(\d{1,4})/g;
+  var prices = [];
+  var m;
+  while ((m = priceRegex.exec(html)) !== null) {
+    prices.push(parseInt(m[1], 10));
+  }
+
+  var priceMin = prices.length ? Math.min.apply(null, prices) : null;
+  var priceMax = prices.length ? Math.max.apply(null, prices) : null;
+  var priceAvg = prices.length
+    ? Math.round(prices.reduce(function (a, b) { return a + b; }, 0) / prices.length)
+    : null;
+
+  // IMENA HOTELA
+  var nameRegex = /sr-hotel__name.*?>(.*?)</g;
+  var hotels = [];
+  var n;
+  while ((n = nameRegex.exec(html)) !== null) {
+    var h = n[1].replace(/\s+/g, " ").trim();
+    if (h.length > 2) hotels.push(h);
+  }
+
+  // RATING
+  var ratingRegex = /bui-review-score__badge.*?>(\d\.\d)</g;
+  var ratings = [];
+  var r;
+  while ((r = ratingRegex.exec(html)) !== null) {
+    ratings.push(parseFloat(r[1]));
+  }
+
+  var combined = hotels
+    .map(function (name, i) {
+      return {
+        name: name,
+        rating: ratings[i] || null
+      };
+    })
+    .slice(0, 10);
+
+  var bestHotel = null;
+  if (combined.length > 0) {
+    combined.sort(function (a, b) {
+      return (b.rating || 0) - (a.rating || 0);
+    });
+    bestHotel = combined[0];
+  }
+
+  return {
+    city: city,
+    engine: "booking_v3",
+    topHotels: combined,
+    bestHotel: bestHotel,
+    priceMin: priceMin ? priceMin + "€" : "N/A",
+    priceAvg: priceAvg ? priceAvg + "€" : "N/A",
+    priceMax: priceMax ? priceMax + "€" : "N/A",
+    url: searchUrl
+  };
+}
+
+// V4 – deep scrape: pokušaj izvući i adresu, review count, district
+async function bookingV4(city, checkin, checkout, adults) {
+  const params = new URLSearchParams();
+  params.set("ss", city);
+  params.set("lang", "hr");
+
+  if (checkin) {
+    params.set("checkin", checkin); // yyyy-mm-dd
+  }
+  if (checkout) {
+    params.set("checkout", checkout);
+  }
+  if (adults) {
+    params.set("group_adults", String(adults));
+  }
+
+  const searchUrl = "https://www.booking.com/searchresults.html?" + params.toString();
+  const html = await fetch(searchUrl).then(function (r) { return r.text(); });
+
+  // grubi regex za blokove hotela
+  var hotelBlockRegex = /data-testid="property-card".*?<\/div>\s*<\/div>/g;
+  var blocks = [];
+  var hb;
+  while ((hb = hotelBlockRegex.exec(html)) !== null) {
+    blocks.push(hb[0]);
+  }
+
+  var hotels = blocks.slice(0, 8).map(function (block) {
+    // naziv
+    var nameMatch = block.match(/data-testid="title".*?>(.*?)<\/div>/);
+    var name = nameMatch ? nameMatch[1].replace(/<[^>]+>/g, "").trim() : null;
+
+    // rating
+    var ratingMatch = block.match(/data-testid="review-score".*?>(\d\.\d)</);
+    var rating = ratingMatch ? parseFloat(ratingMatch[1]) : null;
+
+    // reviews
+    var revMatch = block.match(/data-testid="review-score".*?(\d{1,5})\s+recenzija/);
+    var reviews = revMatch ? parseInt(revMatch[1], 10) : null;
+
+    // district / lokacija
+    var distMatch = block.match(/data-testid="address".*?>(.*?)<\/span>/);
+    var district = distMatch ? distMatch[1].replace(/<[^>]+>/g, "").trim() : null;
+
+    // price (jedna cifra)
+    var priceMatch = block.match(/€\s?(\d{1,4})/);
+    var price = priceMatch ? priceMatch[1] + "€" : null;
+
+    return {
+      name: name,
+      rating: rating,
+      reviews: reviews,
+      district: district,
+      price: price
+    };
+  });
+
+  var bestHotel = null;
+  if (hotels.length > 0) {
+    hotels.sort(function (a, b) {
+      var ra = a.rating || 0;
+      var rb = b.rating || 0;
+      var ca = a.reviews || 0;
+      var cb = b.reviews || 0;
+      // kombinirani score: rating * log(reviews+1)
+      var sa = ra * Math.log(ca + 1);
+      var sb = rb * Math.log(cb + 1);
+      return sb - sa;
+    });
+    bestHotel = hotels[0];
+  }
+
+  // grubi range cijena
+  var numericPrices = hotels
+    .map(function (h) {
+      if (!h.price) return null;
+      var m = h.price.match(/(\d{1,4})/);
+      return m ? parseInt(m[1], 10) : null;
+    })
+    .filter(function (x) { return x !== null; });
+
+  var priceMin = numericPrices.length ? Math.min.apply(null, numericPrices) : null;
+  var priceMax = numericPrices.length ? Math.max.apply(null, numericPrices) : null;
+  var priceAvg = numericPrices.length
+    ? Math.round(numericPrices.reduce(function (a, b) { return a + b; }, 0) / numericPrices.length)
+    : null;
+
+  return {
+    city: city,
+    engine: "booking_v4",
+    checkin: checkin || null,
+    checkout: checkout || null,
+    adults: adults || null,
+    hotels: hotels,
+    bestHotel: bestHotel,
+    priceMin: priceMin ? priceMin + "€" : "N/A",
+    priceAvg: priceAvg ? priceAvg + "€" : "N/A",
+    priceMax: priceMax ? priceMax + "€" : "N/A",
+    url: searchUrl
+  };
+}
+
+// PUBLIC booking() – probaj V4 → fallback na V3 → fallback na čisti link
+async function booking(city, query) {
+  const cached = cacheGet("booking_v_hybrid", { city: city, q: JSON.stringify(query || {}) });
   if (cached) return cached;
 
+  var checkin = query && query.checkin ? query.checkin : null;
+  var checkout = query && query.checkout ? query.checkout : null;
+  var adults = query && query.adults ? parseInt(query.adults, 10) || null : null;
+
   try {
-    const url =
-      "https://booking-com.p.rapidapi.com/v1/hotels/locations?name=" +
-      encodeURIComponent(city) +
-      "&locale=hr";
-
-    // Rezultat trenutačno ne koristimo – bitan je samo da API radi
-    await getJSON(url, {
-      "X-RapidAPI-Key": BOOKING_RAPID_KEY,
-      "X-RapidAPI-Host": "booking-com.p.rapidapi.com"
-    });
-
-    const data = {
-      city: city,
-      dates: "24–28 Nov 2025",
-      price: "od 45€ po noći",
-      url:
-        "https://www.booking.com/searchresults.html?ss=" +
-        encodeURIComponent(city)
-    };
-
-    cacheSet("booking", { city: city }, data, 30 * 60 * 1000);
-    return data;
-  } catch (e) {
-    console.error("booking error", e);
-    return {
-      city: city,
-      dates: "",
-      price: "",
-      url: ""
-    };
+    // V4 pokušaj
+    const v4 = await bookingV4(city, checkin, checkout, adults);
+    cacheSet("booking_v_hybrid", { city: city, q: JSON.stringify(query || {}) }, v4, 60 * 60 * 1000);
+    return v4;
+  } catch (errV4) {
+    console.error("BOOKING V4 FAILED, FALLBACK TO V3:", errV4);
+    try {
+      const v3 = await bookingV3(city);
+      cacheSet("booking_v_hybrid", { city: city, q: JSON.stringify(query || {}) }, v3, 60 * 60 * 1000);
+      return v3;
+    } catch (errV3) {
+      console.error("BOOKING V3 FAILED:", errV3);
+      const fallback = {
+        city: city,
+        engine: "booking_fallback",
+        hotels: [],
+        bestHotel: null,
+        priceMin: "N/A",
+        priceAvg: "N/A",
+        priceMax: "N/A",
+        url:
+          "https://www.booking.com/searchresults.html?ss=" +
+          encodeURIComponent(city)
+      };
+      cacheSet("booking_v_hybrid", { city: city, q: JSON.stringify(query || {}) }, fallback, 30 * 60 * 1000);
+      return fallback;
+    }
   }
 }
 
@@ -561,6 +735,147 @@ async function livecam(city, mode) {
 }
 
 // =====================================================
+// AIRBNB SCRAPER (light) – NO KEY
+// =====================================================
+
+async function airbnb(city) {
+  const cached = cacheGet("airbnb", { city: city });
+  if (cached) return cached;
+
+  const searchUrl =
+    "https://www.airbnb.com/s/" + encodeURIComponent(city) + "/homes";
+
+  try {
+    const html = await fetch(searchUrl).then(function (r) { return r.text(); });
+
+    // vrlo grubi pattern za nazive smještaja
+    var nameRegex = /"listingName":"(.*?)"/g;
+    var names = [];
+    var m;
+    while ((m = nameRegex.exec(html)) !== null) {
+      var nm = m[1].replace(/\\"/g, '"');
+      if (nm.length > 2 && names.indexOf(nm) < 0) {
+        names.push(nm);
+      }
+    }
+
+    // rating
+    var ratingRegex = /"avgRatingLocalized":"(\d\.\d)"/g;
+    var ratings = [];
+    var r;
+    while ((r = ratingRegex.exec(html)) !== null) {
+      ratings.push(parseFloat(r[1]));
+    }
+
+    var listings = names.slice(0, 10).map(function (n, i) {
+      return {
+        name: n,
+        rating: ratings[i] || null
+      };
+    });
+
+    var best = null;
+    if (listings.length > 0) {
+      listings.sort(function (a, b) {
+        return (b.rating || 0) - (a.rating || 0);
+      });
+      best = listings[0];
+    }
+
+    const result = {
+      city: city,
+      engine: "airbnb_scrape",
+      listings: listings,
+      bestListing: best,
+      url: searchUrl
+    };
+
+    cacheSet("airbnb", { city: city }, result, 60 * 60 * 1000);
+    return result;
+  } catch (err) {
+    console.error("AIRBNB SCRAPE ERROR:", err);
+    const fallback = {
+      city: city,
+      engine: "airbnb_fallback",
+      listings: [],
+      bestListing: null,
+      url: searchUrl
+    };
+    cacheSet("airbnb", { city: city }, fallback, 30 * 60 * 1000);
+    return fallback;
+  }
+}
+
+// =====================================================
+// EXPEDIA SCRAPER (light) – NO KEY
+// =====================================================
+
+async function expedia(city) {
+  const cached = cacheGet("expedia", { city: city });
+  if (cached) return cached;
+
+  const searchUrl =
+    "https://www.expedia.com/Hotel-Search?destination=" +
+    encodeURIComponent(city);
+
+  try {
+    const html = await fetch(searchUrl).then(function (r) { return r.text(); });
+
+    var nameRegex = /data-stid="content-hotel-title".*?>(.*?)<\/h3>/g;
+    var hotels = [];
+    var m;
+    while ((m = nameRegex.exec(html)) !== null) {
+      var nm = m[1].replace(/<[^>]+>/g, "").trim();
+      if (nm.length > 2) hotels.push(nm);
+    }
+
+    var ratingRegex = /aria-label="Guest rating .*? of 5".*?>(\d\.\d)</g;
+    var ratings = [];
+    var r;
+    while ((r = ratingRegex.exec(html)) !== null) {
+      ratings.push(parseFloat(r[1]));
+    }
+
+    var list = hotels.slice(0, 10).map(function (n, i) {
+      return {
+        name: n,
+        rating: ratings[i] || null
+      };
+    });
+
+    var best = null;
+    if (list.length > 0) {
+      list.sort(function (a, b) {
+        return (b.rating || 0) - (a.rating || 0);
+      });
+      best = list[0];
+    }
+
+    const result = {
+      city: city,
+      engine: "expedia_scrape",
+      hotels: list,
+      bestHotel: best,
+      url: searchUrl
+    };
+
+    cacheSet("expedia", { city: city }, result, 60 * 60 * 1000);
+    return result;
+  } catch (err) {
+    console.error("EXPEDIA SCRAPE ERROR:", err);
+    const fallback = {
+      city: city,
+      engine: "expedia_fallback",
+      hotels: [],
+      bestHotel: null,
+      url: searchUrl
+    };
+    cacheSet("expedia", { city: city }, fallback, 30 * 60 * 1000);
+    return fallback;
+  }
+}
+
+// =====================================================
 // TRUCK ROUTES – DEMO
 // =====================================================
 
@@ -730,7 +1045,7 @@ async function handleAdmin(req) {
 // MAIN HANDLER – /api/tbw
 // =====================================================
 
-module.exports = async (req, res) => {
+module.exports = async function (req, res) {
   // CORS za web + APK webview
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
@@ -786,7 +1101,7 @@ module.exports = async (req, res) => {
 
     const founderKeyHeader = req.headers["x-founder-key"] || "";
 
-    let result = {};
+    let result;
 
     switch (route) {
       case "hero":
@@ -810,7 +1125,11 @@ module.exports = async (req, res) => {
         break;
 
       case "booking":
-        result = await booking(city);
+        result = await booking(city, {
+          checkin: req.query.checkin,
+          checkout: req.query.checkout,
+          adults: req.query.adults
+        });
         break;
 
       case "airport":
@@ -851,6 +1170,14 @@ module.exports = async (req, res) => {
 
       case "food":
         result = await foodAndNightlife(city);
+        break;
+
+      case "airbnb":
+        result = await airbnb(city);
+        break;
+
+      case "expedia":
+        result = await expedia(city);
         break;
 
       case "premium":
