@@ -1,5 +1,5 @@
-// TBW AI PREMIUM NAVIGATOR – FRONTEND LOGIKA
-// Radi uz tbw.js backend na /api/tbw
+// TBW AI PREMIUM NAVIGATOR – FRONTEND
+// Radi uz backend /api/tbw (tbw.js)
 
 const API_BASE = "/api/tbw";
 
@@ -7,9 +7,7 @@ let currentCity = "Split";
 let tickerTimer = null;
 let micActive = false;
 let recognition = null;
-
-// pamti zadnju “AI rutu” za navigacijsku karticu
-let lastRouteInfo = null;
+let pendingEmergencyPrompt = false;
 
 // ---------------------------------------------
 // POMOĆNE FUNKCIJE
@@ -23,18 +21,6 @@ function setText(id, text) {
   if (el) el.textContent = text;
 }
 
-function speak(text) {
-  try {
-    if (!("speechSynthesis" in window)) return;
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "hr-HR";
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utter);
-  } catch (e) {
-    console.error("speech error", e);
-  }
-}
-
 async function callRoute(route, params = {}) {
   const url = new URL(API_BASE, window.location.origin);
   url.searchParams.set("route", route);
@@ -43,41 +29,59 @@ async function callRoute(route, params = {}) {
   if (city) url.searchParams.set("city", city);
 
   Object.keys(params).forEach((k) => {
-    if (k !== "city" && params[k] != null) {
+    if (k !== "city" && params[k] != null && params[k] !== "") {
       url.searchParams.set(k, params[k]);
     }
   });
 
   const res = await fetch(url.toString());
-  if (!res.ok) {
-    throw new Error(`API ${route} error ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`API ${route} error ${res.status}`);
   return res.json();
+}
+
+function speakOut(text) {
+  if (!("speechSynthesis" in window)) return;
+  const utter = new SpeechSynthesisUtterance(text);
+  // pokušaj na hr, fallback na default
+  const voices = window.speechSynthesis.getVoices() || [];
+  const hrVoice =
+    voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("hr")) ||
+    voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("sr")) ||
+    null;
+  if (hrVoice) utter.voice = hrVoice;
+  utter.rate = 1;
+  utter.pitch = 1;
+  window.speechSynthesis.speak(utter);
 }
 
 // ---------------------------------------------
 // INTRO A + C
 // ---------------------------------------------
-function runIntro() {
-  const full = $("#intro-full");
-  const mini = $("#intro-mini");
+function playIntroSequence() {
+  const fullIntro = document.getElementById("intro-full");
+  const miniIntro = document.getElementById("intro-mini");
+  if (!fullIntro || !miniIntro) return;
 
-  const keyFull = "tbw_intro_full_shown";
-  const alreadyFull = localStorage.getItem(keyFull) === "1";
+  const hasShownFull = localStorage.getItem("tbw_intro_full_shown") === "1";
 
-  if (!alreadyFull && full) {
-    full.classList.remove("hidden");
+  function showMini() {
+    miniIntro.classList.remove("hidden");
     setTimeout(() => {
-      full.classList.add("hidden");
-      localStorage.setItem(keyFull, "1");
-      if (mini) {
-        mini.classList.remove("hidden");
-        setTimeout(() => mini.classList.add("hidden"), 1500);
-      }
-    }, 6000);
-  } else if (mini) {
-    mini.classList.remove("hidden");
-    setTimeout(() => mini.classList.add("hidden"), 1500);
+      miniIntro.classList.add("hidden");
+    }, 2000);
+  }
+
+  if (!hasShownFull) {
+    // Prvo pokretanje na ovom uređaju → FULL A (~4-5s)
+    fullIntro.classList.remove("hidden");
+    setTimeout(() => {
+      fullIntro.classList.add("hidden");
+      localStorage.setItem("tbw_intro_full_shown", "1");
+      showMini();
+    }, 4500);
+  } else {
+    // Svaki idući start → C
+    showMini();
   }
 }
 
@@ -85,10 +89,10 @@ function runIntro() {
 // LEGAL OVERLAY + LOKACIJA
 // ---------------------------------------------
 function setupLegalOverlay() {
-  const overlay = $("#legal-overlay");
-  const chkTerms = $("#agree-terms");
-  const chkRobot = $("#agree-robot");
-  const btn = $("#legal-accept-btn");
+  const overlay = document.getElementById("legal-overlay");
+  const chkTerms = document.getElementById("agree-terms");
+  const chkRobot = document.getElementById("agree-robot");
+  const btn = document.getElementById("legal-accept-btn");
 
   if (!overlay || !chkTerms || !chkRobot || !btn) return;
 
@@ -110,22 +114,22 @@ function setupLegalOverlay() {
 
   if (accepted) {
     overlay.classList.add("hidden");
-    refreshCity(currentCity);
     showLocationModalOnce();
+    refreshCity(currentCity);
   } else {
     overlay.classList.remove("hidden");
   }
 }
 
 function showLocationModalOnce() {
-  const modal = $("#location-modal");
+  const modal = document.getElementById("location-modal");
   if (!modal) return;
 
   const already = localStorage.getItem("tbw_loc_prompted") === "1";
   if (already) return;
 
-  const allowBtn = $("#location-allow");
-  const denyBtn = $("#location-deny");
+  const allowBtn = document.getElementById("location-allow");
+  const denyBtn = document.getElementById("location-deny");
 
   modal.classList.remove("hidden");
 
@@ -140,6 +144,7 @@ function showLocationModalOnce() {
       navigator.geolocation.getCurrentPosition(
         () => {
           // Ovdje bi išlo reverse geocoding → grad
+          // Za sada ostavljamo currentCity kakav jest.
         },
         () => {}
       );
@@ -153,9 +158,10 @@ function showLocationModalOnce() {
 // FULLSCREEN PROZORI
 // ---------------------------------------------
 function setupFullscreen() {
-  const overlay = $("#fullscreen-overlay");
-  const exitBtn = $("#fullscreen-exit");
-  const content = $("#fullscreen-content");
+  const overlay = document.getElementById("fullscreen-overlay");
+  const exitBtn = document.getElementById("fullscreen-exit");
+  const content = document.getElementById("fullscreen-content");
+
   if (!overlay || !exitBtn || !content) return;
 
   function closeFullscreen() {
@@ -182,7 +188,7 @@ function setupFullscreen() {
 // TICKER
 // ---------------------------------------------
 async function updateTicker() {
-  const el = $("#ticker");
+  const el = document.getElementById("ticker");
   if (!el) return;
 
   try {
@@ -219,7 +225,7 @@ async function updateTicker() {
 function startTicker() {
   if (tickerTimer) clearInterval(tickerTimer);
   updateTicker();
-  // svaka 69 sekundi, po dogovoru
+  // 69 s refresh, kako si tražio
   tickerTimer = setInterval(updateTicker, 69 * 1000);
 }
 
@@ -229,11 +235,13 @@ function startTicker() {
 async function loadHero() {
   try {
     const data = await callRoute("hero");
-    const img = $("#hero-img");
-    const pill = $("#hero-city-pill");
-    if (pill) pill.textContent = data.city || currentCity;
+    const img = document.getElementById("hero-img");
+    const pill = document.getElementById("hero-city-pill");
     if (img && data.images && data.images.length > 0) {
       img.src = data.images[0];
+    }
+    if (pill) {
+      pill.textContent = data.city || currentCity;
     }
   } catch (e) {
     console.error("hero", e);
@@ -243,8 +251,15 @@ async function loadHero() {
 async function loadWeather() {
   try {
     const data = await callRoute("weather");
-    setText("weather-temp", data.temp != null ? `${data.temp.toFixed(1)}°C` : "--°C");
-    setText("weather-cond", data.condition || "Nema podataka.");
+    if (typeof data.temp === "number") {
+      setText("weather-temp", `${data.temp.toFixed(1)}°C`);
+    } else {
+      setText("weather-temp", "--°C");
+    }
+    setText(
+      "weather-cond",
+      data.condition ? data.condition : "Nema podataka."
+    );
   } catch (e) {
     console.error("weather", e);
     setText("weather-cond", "Greška pri dohvaćanju vremena.");
@@ -254,7 +269,10 @@ async function loadWeather() {
 async function loadTraffic() {
   try {
     const data = await callRoute("traffic");
-    setText("traffic-status", data.status || "Nema podataka o prometu.");
+    setText(
+      "traffic-status",
+      data.status ? data.status : "Nema podataka o prometu."
+    );
     setText(
       "traffic-level",
       data.level != null ? `Brzina: ${data.level} km/h` : ""
@@ -278,9 +296,9 @@ async function loadSea() {
 async function loadTransit() {
   try {
     const data = await callRoute("transit");
-    const busList = $("#transit-bus-list");
-    const trainList = $("#transit-train-list");
-    const ferryList = $("#transit-ferry-list");
+    const busList = document.getElementById("transit-bus-list");
+    const trainList = document.getElementById("transit-train-list");
+    const ferryList = document.getElementById("transit-ferry-list");
 
     if (busList) {
       busList.innerHTML = "";
@@ -288,7 +306,9 @@ async function loadTransit() {
         const li = document.createElement("li");
         li.textContent = `Linija ${b.line}: ${b.from} → ${b.to}, polazak za ${
           b.nextDepartureMinutes
-        } min${b.delayMinutes ? ` (kašnjenje ${b.delayMinutes} min)` : ""}`;
+        } min${
+          b.delayMinutes ? ` (kašnjenje ${b.delayMinutes} min)` : ""
+        }`;
         busList.appendChild(li);
       });
     }
@@ -323,7 +343,10 @@ async function loadAirport() {
   try {
     const data = await callRoute("airport");
     setText("airport-code", data.airport || "---");
-    setText("airport-status", data.status || "Nema podataka o letovima.");
+    setText(
+      "airport-status",
+      data.status || "Nema podataka o letovima."
+    );
   } catch (e) {
     console.error("airport", e);
     setText("airport-status", "Greška pri dohvaćanju letova.");
@@ -342,7 +365,7 @@ async function loadServices() {
       emerg.status || "Nema posebnih sigurnosnih informacija."
     );
 
-    const list = $("#services-list");
+    const list = document.getElementById("services-list");
     if (list) {
       list.innerHTML = "";
       (srv.list || []).forEach((item) => {
@@ -359,7 +382,7 @@ async function loadServices() {
 async function loadLandmarks() {
   try {
     const data = await callRoute("landmarks");
-    const list = $("#landmarks-list");
+    const list = document.getElementById("landmarks-list");
     if (list) {
       list.innerHTML = "";
       (data.list || []).forEach((name) => {
@@ -426,7 +449,7 @@ async function loadTruck() {
   try {
     const data = await callRoute("truck", { season: "winter" });
     setText("truck-info", data.info || "");
-    const ul = $("#truck-restrictions");
+    const ul = document.getElementById("truck-restrictions");
     if (ul) {
       ul.innerHTML = "";
       (data.restrictions || []).forEach((r) => {
@@ -444,9 +467,56 @@ async function loadRouteDefault() {
   setText("route-result", "");
 }
 
+async function loadBooking() {
+  try {
+    const data = await callRoute("booking");
+    setText("booking-city", data.city || currentCity);
+    setText("booking-dates", data.dates || "Datumi nisu postavljeni.");
+    setText("booking-price", data.price || "—");
+
+    const urlWrap = document.getElementById("booking-url-wrap");
+    const urlEl = document.getElementById("booking-url");
+
+    if (urlWrap && urlEl) {
+      if (data.url) {
+        urlEl.href = data.url;
+        urlWrap.classList.remove("hidden");
+      } else {
+        urlWrap.classList.add("hidden");
+      }
+    }
+
+    if (data.status) {
+      setText("booking-status", data.status);
+    } else {
+      setText(
+        "booking-status",
+        "Za više opcija otvorit ćeš Booking, Airbnb ili druge servise."
+      );
+    }
+  } catch (e) {
+    console.error("booking", e);
+    setText("booking-status", "Greška pri dohvaćanju ponuda.");
+  }
+}
+
+// livecam za header → ali sada koristimo hero-image; ovo je fallback ako želiš YouTube
+async function loadLivecam() {
+  try {
+    const data = await callRoute("livecam", { mode: "sea" });
+    const frame = document.getElementById("livecam-frame");
+    if (frame && data.url) {
+      frame.src = data.url;
+    }
+  } catch (e) {
+    console.error("livecam", e);
+  }
+}
+
+// premium badge
 async function loadPremium() {
   try {
-    const badge = $("#premium-badge");
+    const badge = document.getElementById("premium-badge");
     if (!badge) return;
 
     let userId = localStorage.getItem("tbw_user_id");
@@ -476,155 +546,87 @@ async function loadPremium() {
   }
 }
 
-// Booking kartica – backend route "booking" (ako ne radi, prikaži poruku)
-async function loadBooking() {
-  const cityEl = $("#booking-city");
-  const datesEl = $("#booking-dates");
-  const priceEl = $("#booking-price");
-  const statusEl = $("#booking-status");
-  const urlWrap = $("#booking-url-wrap");
-  const urlA = $("#booking-url");
-
-  if (cityEl) cityEl.textContent = currentCity;
-  if (datesEl) datesEl.textContent = "";
-  if (priceEl) priceEl.textContent = "";
-  if (statusEl) statusEl.textContent = "Tražim smještaj…";
-  if (urlWrap) urlWrap.classList.add("hidden");
-
-  try {
-    const data = await callRoute("booking");
-    if (!data) {
-      statusEl.textContent =
-        "Nema dostupnih podataka o smještaju (API nije spojen).";
-      return;
-    }
-
-    if (cityEl) cityEl.textContent = data.city || currentCity;
-    if (datesEl) datesEl.textContent = data.dates || "–";
-    if (priceEl) priceEl.textContent = data.price || "–";
-
-    if (data.url && urlA && urlWrap) {
-      urlA.href = data.url;
-      urlWrap.classList.remove("hidden");
-    }
-
-    statusEl.textContent =
-      data.price || data.dates
-        ? "Klikni 'Otvori ponude' za detalje na Booking.com."
-        : "Nema detaljnih podataka – otvorit će se rezultati pretrage.";
-  } catch (e) {
-    console.error("booking", e);
-    if (statusEl) {
-      statusEl.textContent =
-        "Ne mogu dohvatiti smještaj. API možda nije konfiguriran.";
-    }
-  }
-}
-
-// Navigacijska kartica – prikaz zadnje rute i AI komentara
-function updateNavigationCard() {
-  const routeEl = $("#nav-current-route");
-  const dirEl = $("#nav-direction");
-  const etaEl = $("#nav-eta");
-  const profileEl = $("#nav-profile");
-  const aiEl = $("#nav-ai-response");
-
-  if (!lastRouteInfo) {
-    if (routeEl) routeEl.textContent = "Nema aktivne rute.";
-    if (dirEl) dirEl.textContent = "–";
-    if (etaEl) etaEl.textContent = "–";
-    if (aiEl) aiEl.textContent = "";
-    return;
-  }
-
-  if (routeEl)
-    routeEl.textContent = `${lastRouteInfo.from} → ${lastRouteInfo.to}`;
-  if (dirEl) dirEl.textContent = lastRouteInfo.direction || "prema " + lastRouteInfo.to;
-  if (etaEl) etaEl.textContent = lastRouteInfo.eta || lastRouteInfo.duration || "procjena";
-  if (profileEl) profileEl.textContent = lastRouteInfo.mode === "truck" ? "Kamion" : "Osobni";
-  if (aiEl) aiEl.textContent = lastRouteInfo.aiText || "";
-}
-
-// livecam ne koristimo (layout slika), ali možemo i dalje dohvatiti YouTube URL za neke buduće potrebe
-async function loadLivecam() {
-  try {
-    await callRoute("livecam", { mode: "sea" });
-  } catch (e) {
-    console.error("livecam", e);
-  }
-}
-
 // ---------------------------------------------
-// SIGURNOST & SOS
+// SIGURNOST & SOS (localStorage konfiguracija)
 // ---------------------------------------------
-function loadSafetyCard() {
-  const raw = localStorage.getItem("tbw_sos_profile");
-  let profile = null;
-  try {
-    profile = raw ? JSON.parse(raw) : null;
-  } catch {
-    profile = null;
+const SOS_KEY = "tbw_sos_profile";
+const ICE_KEY = "tbw_ice_contacts";
+
+function loadSafetyPanel() {
+  const sosSummary = document.getElementById("sos-summary");
+  const iceList = document.getElementById("ice-list");
+
+  // SOS profil
+  const rawSos = localStorage.getItem(SOS_KEY);
+  if (rawSos && sosSummary) {
+    try {
+      const sos = JSON.parse(rawSos);
+      const parts = [];
+      if (sos.name) parts.push(`Ime: ${sos.name}`);
+      if (sos.blood) parts.push(`Krvna grupa: ${sos.blood}`);
+      if (sos.allergies) parts.push(`Alergije: ${sos.allergies}`);
+      if (sos.meds) parts.push(`Terapija: ${sos.meds}`);
+      sosSummary.textContent =
+        parts.join(" • ") || "SOS profil je nepotpun. Uredi za više detalja.";
+    } catch {
+      sosSummary.textContent = "Nije postavljen.";
+    }
+  } else if (sosSummary) {
+    sosSummary.textContent = "Nije postavljen.";
   }
 
-  const summaryEl = $("#sos-summary");
-  const iceList = $("#ice-list");
-
-  if (!profile) {
-    if (summaryEl) summaryEl.textContent = "Nije postavljen.";
-    if (iceList) iceList.innerHTML = "";
-    return;
-  }
-
-  if (summaryEl) {
-    summaryEl.textContent =
-      (profile.blood ? `Krvna grupa: ${profile.blood} · ` : "") +
-      (profile.allergies ? `Alergije: ${profile.allergies} · ` : "") +
-      (profile.notes || "");
-  }
-
+  // ICE kontakti
   if (iceList) {
     iceList.innerHTML = "";
-    (profile.ice || []).forEach((c) => {
-      const li = document.createElement("li");
-      li.textContent = `${c.name} – ${c.phone}`;
-      iceList.appendChild(li);
-    });
+    const rawIce = localStorage.getItem(ICE_KEY);
+    if (rawIce) {
+      try {
+        const contacts = JSON.parse(rawIce);
+        (contacts || []).forEach((c) => {
+          const li = document.createElement("li");
+          li.textContent = `${c.name} – ${c.phone}`;
+          iceList.appendChild(li);
+        });
+      } catch {
+        // ignore
+      }
+    }
   }
 }
 
 function setupSafetyActions() {
-  const editBtn = $("#sos-edit");
-  const call112 = $("#call-112");
-  const call911 = $("#call-911");
+  const sosEdit = document.getElementById("sos-edit");
+  const call112 = document.getElementById("call-112");
+  const call911 = document.getElementById("call-911");
 
-  if (editBtn) {
-    editBtn.addEventListener("click", () => {
-      const blood = prompt("Unesi krvnu grupu (npr. 0+, A+…)", "");
-      const allergies = prompt(
-        "Alergije / lijekovi (kratko, zbog hitne):",
+  if (sosEdit) {
+    sosEdit.addEventListener("click", () => {
+      const name = prompt("Ime i prezime (SOS profil):", "");
+      const blood = prompt("Krvna grupa (npr. 0-, A+, nepoznato):", "");
+      const allergies = prompt("Alergije (ako nema, upiši 'nema'):", "");
+      const meds = prompt("Važna terapija / lijekovi:", "");
+      const iceRaw = prompt(
+        "ICE kontakti: upiši npr. 'Ana 0911111111; Marko +38598123456'",
         ""
       );
-      const notes = prompt(
-        "Važne napomene (bolesti, implanti, lijekovi…):",
-        ""
-      );
 
-      const ice = [];
-      const count = 3;
-      for (let i = 0; i < count; i++) {
-        const name = prompt(
-          `ICE kontakt ${i + 1} – ime (ENTER za preskoči):`,
-          ""
-        );
-        if (!name) continue;
-        const phone = prompt(`Telefon za ${name}:`, "");
-        if (!phone) continue;
-        ice.push({ name, phone });
+      const sos = { name, blood, allergies, meds };
+      localStorage.setItem(SOS_KEY, JSON.stringify(sos));
+
+      if (iceRaw && iceRaw.trim()) {
+        const contacts = iceRaw.split(";").map((c) => {
+          const parts = c.trim().split(/\s+/);
+          if (parts.length < 2) return null;
+          const phone = parts.pop();
+          const namePart = parts.join(" ");
+          return { name: namePart, phone };
+        });
+        const filtered = contacts.filter(Boolean);
+        localStorage.setItem(ICE_KEY, JSON.stringify(filtered));
       }
 
-      const profile = { blood, allergies, notes, ice };
-      localStorage.setItem("tbw_sos_profile", JSON.stringify(profile));
-      loadSafetyCard();
+      loadSafetyPanel();
+      alert("SOS profil i ICE kontakti su spremljeni u ovom uređaju.");
     });
   }
 
@@ -633,46 +635,52 @@ function setupSafetyActions() {
       window.location.href = "tel:112";
     });
   }
-
   if (call911) {
     call911.addEventListener("click", () => {
       window.location.href = "tel:911";
     });
   }
+
+  loadSafetyPanel();
 }
 
-function maybeOfferSOS(transcript) {
-  const lower = transcript.toLowerCase();
+function detectRegionEmergencyNumber() {
+  const lang = (navigator.language || "").toLowerCase();
   if (
-    lower.includes("nesreća ispred mene") ||
-    lower.includes("nesreca ispred mene") ||
-    lower.includes("udarac") ||
-    lower.includes("sudar") ||
-    lower.includes("accident")
+    lang.includes("-us") ||
+    lang.includes("-ca") ||
+    lang.includes("-mx") ||
+    lang.includes("-ph")
   ) {
-    const wants = confirm(
-      "Čini se da spominješ nesreću ispred sebe. Želiš li da nazovem hitne službe (112)?"
-    );
-    if (wants) {
-      window.location.href = "tel:112";
-    } else {
-      speak("U redu, ne zovem hitne. Ako se situacija promijeni, reci mi.");
-    }
+    return "911";
   }
+  // default EU stil
+  return "112";
+}
+
+function triggerEmergencyCallFlow() {
+  const num = detectRegionEmergencyNumber();
+  const msg =
+    num === "112"
+      ? "Označio sam nesreću. Otvaram poziv prema 112 na tvom uređaju."
+      : "Označio sam nesreću. Otvaram poziv prema 911 na tvom uređaju.";
+  setText("nav-ai-response", msg);
+  speakOut(msg);
+  window.location.href = "tel:" + num;
 }
 
 // ---------------------------------------------
-// RUTA FORM
+// RUTA FORM (ručni unos)
 // ---------------------------------------------
 function setupRouteForm() {
-  const form = $("#route-form");
+  const form = document.getElementById("route-form");
   if (!form) return;
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const from = $("#route-from").value.trim();
-    const to = $("#route-to").value.trim();
-    const mode = $("#route-mode").value;
+    const from = document.getElementById("route-from").value.trim();
+    const to = document.getElementById("route-to").value.trim();
+    const mode = document.getElementById("route-mode").value;
 
     if (!from || !to) {
       setText("route-result", "Unesi polazak i odredište.");
@@ -684,16 +692,10 @@ function setupRouteForm() {
       const text = `${data.from} → ${data.to}: ${data.distance} / ${data.duration} (${data.source})`;
       setText("route-result", text);
 
-      lastRouteInfo = {
-        from: data.from,
-        to: data.to,
-        mode: mode,
-        duration: data.duration,
-        direction: `prema ${data.to}`,
-        eta: null,
-        aiText: "Ruta postavljena ručno preko forme.",
-      };
-      updateNavigationCard();
+      setText("nav-current-route", `${data.from} → ${data.to}`);
+      setText("nav-direction", data.to || "–");
+      setText("nav-eta", data.duration || "–");
+      setText("nav-profile", mode === "truck" ? "Kamion" : "Osobni");
     } catch (err) {
       console.error("route", err);
       setText("route-result", "Greška pri računanju rute.");
@@ -702,144 +704,249 @@ function setupRouteForm() {
 }
 
 // ---------------------------------------------
-// PRETRAGA + GLAS
+// PRETRAGA + GLAS – AI NAVIGATOR
 // ---------------------------------------------
 function parseCityFromQuery(query) {
-  let m = query.match(/\bu\s+([A-ZČĆŠĐŽ][A-Za-zČĆŠĐŽčćšđž]+)\b/);
-  if (m) return m[1];
+  // probaj "u Zadru", "za Zagreb", "prema Splitu"
+  let m =
+    query.match(/\b(u|za|prema)\s+([A-ZČĆŠĐŽ][A-Za-zČĆŠĐŽčćšđž]+)\b/) ||
+    query.match(/\b([A-ZČĆŠĐŽ][A-Za-zČĆŠĐŽčćšđž]+)\b$/);
 
-  const words = query.split(/\s+/);
-  const candidates = words.filter(
-    (w) => /^[A-ZČĆŠĐŽ][A-Za-zČĆŠĐŽčćšđž]+$/.test(w)
-  );
-  if (candidates.length > 0) return candidates[candidates.length - 1];
-
-  // fallback – cijeli string
-  return query.trim();
+  if (m) {
+    const city = m[2] || m[1];
+    return city;
+  }
+  return null;
 }
 
-async function doSearchFromInput() {
-  const input = $("#search-input");
-  if (!input) return;
-  const q = input.value.trim();
-  if (!q) return;
-  await handleVoiceCommand(q); // koristimo isti parser za tekst i glas
+function stripWakeWord(text) {
+  let t = text.trim();
+  const wakeRegex =
+    /^\s*(hey|hej)\s+(tbw|tebeve|te-be-ve|t\.b\.w\.?|teve|ti bi dablju)\s*,?/i;
+  t = t.replace(wakeRegex, "").trim();
+  return t;
 }
 
-// jednostavan NLP parser za glasovne i tekstualne naredbe
-async function handleVoiceCommand(originalText) {
-  if (!originalText) return;
+function detectIntents(lower) {
+  const intents = [];
 
-  let text = originalText.trim();
-
-  // ukloni “hey tbw / hej tbw” varijante
-  text = text.replace(/^(hey|hej)\s+tbw\b/i, "").trim();
-  text = text.replace(/^(hey|hej)\s+te\s*be\s*ve\b/i, "").trim();
-
-  console.log("Command:", originalText, "->", text);
-
-  maybeOfferSOS(text);
-
-  // 1) pitanja o prometu / vremenu / letu
-  const lower = text.toLowerCase();
-
-  // detekcija grada ako je u frazi tipa “u Zadru” ili “za Zagreb”
-  let detectedCity = null;
-  const mU = text.match(/\b(u|za|prema)\s+([A-ZČĆŠĐŽ][A-Za-zČĆŠĐŽčćšđž]+)\b/);
-  if (mU) detectedCity = mU[2];
-
-  // 2) booking / smještaj
   if (
-    lower.includes("apartman") ||
-    lower.includes("smještaj") ||
-    lower.includes("smjestaj") ||
-    lower.includes("hotel")
+    /apartman|smještaj|hotel|booking|airbnb|expedia|noćenje/.test(lower)
   ) {
-    const city = detectedCity || parseCityFromQuery(text);
-    currentCity = city;
-    setText("hero-city-pill", city);
-    setText("booking-city", city);
-    await refreshCity(city, { skipBooking: false }); // učitava sve + booking
-    speak(
-      `Tražim ponude smještaja za ${city}. Kartica rezervacija će se ažurirati.`
+    intents.push("booking");
+  }
+  if (/promet|gužva|zastoj|traffic|kolona/.test(lower)) {
+    intents.push("traffic");
+  }
+  if (/vrijeme|temperatur|prognoza|vremenska/.test(lower)) {
+    intents.push("weather");
+  }
+  if (/more|valovit|sea state|valovi/.test(lower)) {
+    intents.push("sea");
+  }
+  if (/avion|let|aerodrom|zračna luka|flight/.test(lower)) {
+    intents.push("airport");
+  }
+  if (/ruta|put|navigiraj|navigacija|idem prema|vozim/.test(lower)) {
+    intents.push("route");
+  }
+  if (/truck|kamion|long haul/.test(lower)) {
+    intents.push("truck");
+  }
+  if (/nesreć|nesrece|accident|sudar/.test(lower)) {
+    intents.push("emergency");
+  }
+  return intents;
+}
+
+async function handleAiQuery(query, options = {}) {
+  const { speak = true } = options;
+  if (!query || !query.trim()) return;
+
+  let text = stripWakeWord(query);
+  if (!text) {
+    setText(
+      "nav-ai-response",
+      "Slušam. Reci npr. 'idem prema Zagrebu, kakav je promet ispred mene?'"
     );
     return;
   }
 
-  // 3) “idem prema X … kakav je promet ispred mene”
-  if (
-    (lower.includes("idem prema") || lower.includes("vozim prema")) &&
-    lower.includes("promet")
-  ) {
-    const city = detectedCity || parseCityFromQuery(text);
-    currentCity = city;
-    await refreshCity(city);
+  const lower = text.toLowerCase();
+  const destinationCity = parseCityFromQuery(text) || currentCity;
+  const intents = detectIntents(lower);
 
-    const traffic = await callRoute("traffic", { city });
-    const weather = await callRoute("weather", { city });
-    const airport = await callRoute("airport", { city });
+  const responses = [];
 
-    const spoken = `Prema ${city} je trenutno stanje: ${traffic.status ||
-      "nema podatka o prometu"}. Temperatura oko ${
-      weather.temp != null ? weather.temp.toFixed(0) + " stupnjeva" : "nepoznato"
-    }. Letovi s aerodroma ${airport.airport || ""} – ${
-      airport.status || "nema posebnih informacija"
-    }.`;
+  // Emergency quick-confirm
+  if (pendingEmergencyPrompt) {
+    if (/^(da|može|naravno|obavijesti|zovi)/.test(lower)) {
+      pendingEmergencyPrompt = false;
+      triggerEmergencyCallFlow();
+      return;
+    }
+    if (/^(ne|nije potrebno|stigli su|ne treba)/.test(lower)) {
+      pendingEmergencyPrompt = false;
+      const msg = "U redu, ne zovem hitne službe. Vozi oprezno.";
+      setText("nav-ai-response", msg);
+      if (speak) speakOut(msg);
+      return;
+    }
+  }
 
-    speak(spoken);
-
-    lastRouteInfo = {
-      from: "trenutna lokacija",
-      to: city,
-      mode: "car",
-      duration: traffic.status || "procjena",
-      direction: `prema ${city}`,
-      eta: null,
-      aiText: spoken,
-    };
-    updateNavigationCard();
+  if (intents.includes("emergency")) {
+    pendingEmergencyPrompt = true;
+    const msg =
+      "Detektirao sam prijavu nesreće ispred tebe. Želiš li da pozovem hitne službe?";
+    setText("nav-ai-response", msg);
+    if (speak) speakOut(msg);
     return;
   }
 
-  // 4) samo promjena grada
-  if (
-    lower.startsWith("zagreb") ||
-    lower.startsWith("split") ||
-    lower.startsWith("zadar") ||
-    lower.startsWith("rijeka") ||
-    lower.startsWith("osijek") ||
-    lower.includes("grad")
-  ) {
-    const city = detectedCity || parseCityFromQuery(text);
-    await refreshCity(city);
-    speak(`Prebacujem sve prozore na grad ${city}.`);
-    return;
+  // PARCIJALNO DOHVAĆANJE PODATAKA
+  const tasks = [];
+
+  if (intents.includes("weather")) tasks.push(loadWeather());
+  if (intents.includes("traffic")) tasks.push(loadTraffic());
+  if (intents.includes("sea")) tasks.push(loadSea());
+  if (intents.includes("airport")) tasks.push(loadAirport());
+  if (intents.includes("booking")) tasks.push(loadBooking());
+  if (intents.includes("truck")) tasks.push(loadTruck());
+
+  // Ako je nav/route → izračunaj rutu (currentCity -> destinationCity)
+  let routeData = null;
+  if (intents.includes("route") || intents.includes("traffic")) {
+    try {
+      const mode = intents.includes("truck") ? "truck" : "car";
+      routeData = await callRoute("route", {
+        from: currentCity,
+        to: destinationCity,
+        mode,
+      });
+      setText("nav-current-route", `${routeData.from} → ${routeData.to}`);
+      setText("nav-direction", routeData.to || "–");
+      setText("nav-eta", routeData.duration || "–");
+      setText("nav-profile", mode === "truck" ? "Kamion" : "Osobni");
+      setText(
+        "route-result",
+        `${routeData.from} → ${routeData.to}: ${routeData.distance} / ${routeData.duration} (${routeData.source})`
+      );
+    } catch (e) {
+      console.error("route (AI)", e);
+    }
   }
 
-  // 5) klasična tekstualna pretraga – samo promjena grada
-  const city = parseCityFromQuery(text);
-  await refreshCity(city);
+  await Promise.allSettled(tasks);
+
+  // SASTAVI ODGOVOR
+
+  if (intents.includes("traffic")) {
+    const trafficCard = document.getElementById("traffic-status");
+    const levelEl = document.getElementById("traffic-level");
+    const tStatus = trafficCard ? trafficCard.textContent : "";
+    const tLevel = levelEl ? levelEl.textContent : "";
+    let part = `Prema ${destinationCity} promet je: ${tStatus.toLowerCase()}.`;
+    if (tLevel) part += ` Trenutna prosječna brzina je ${tLevel.replace("Brzina: ", "")}.`;
+    if (routeData && routeData.duration) {
+      part += ` Po tvojoj ruti, put će trajati otprilike ${routeData.duration}.`;
+    }
+    responses.push(part);
+  }
+
+  if (intents.includes("weather")) {
+    const wt = document.getElementById("weather-temp")?.textContent || "";
+    const wc = document.getElementById("weather-cond")?.textContent || "";
+    responses.push(
+      `Vrijeme u ${currentCity} je ${wc.toLowerCase()} s temperaturom oko ${wt}.`
+    );
+  }
+
+  if (intents.includes("sea")) {
+    const sea = document.getElementById("sea-state")?.textContent || "";
+    responses.push(`Stanje mora: ${sea.toLowerCase()}.`);
+  }
+
+  if (intents.includes("airport")) {
+    const ac = document.getElementById("airport-code")?.textContent || "";
+    const as = document.getElementById("airport-status")?.textContent || "";
+    responses.push(
+      `Na aerodromu ${ac || "u tvom području"} status je: ${as.toLowerCase()}.`
+    );
+  }
+
+  if (intents.includes("booking")) {
+    const bCity = document.getElementById("booking-city")?.textContent || destinationCity;
+    const bookingUrl = `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(
+      bCity
+    )}`;
+    const part =
+      `Za smještaj u ${bCity} mogu ti predložiti da pogledaš aktualne ponude. ` +
+      `Otvorit ću ti Booking s filtriranim gradom.`;
+    const urlEl = document.getElementById("booking-url");
+    const wrap = document.getElementById("booking-url-wrap");
+    if (urlEl && wrap) {
+      urlEl.href = bookingUrl;
+      wrap.classList.remove("hidden");
+    }
+    responses.push(part);
+  }
+
+  if (intents.length === 0) {
+    responses.push(
+      "Razumijem te. Možeš pitati za promet, vrijeme, smještaj, rutu, more, aerodrom ili prijaviti nesreću."
+    );
+  }
+
+  const finalText = responses.join(" ");
+
+  setText("nav-ai-response", finalText);
+  if (speak && finalText) speakOut(finalText);
 }
 
-// tekstualni search
-function setupSearch() {
-  const btn = $("#search-btn");
-  const input = $("#search-input");
+// Glavna funkcija koja spaja pretragu i AI
+async function handleUserQuery(rawQuery, options = {}) {
+  if (!rawQuery || !rawQuery.trim()) return;
+  const q = rawQuery.trim();
 
-  if (btn) btn.addEventListener("click", doSearchFromInput);
+  // odredi grad ako se spominje
+  const possibleCity = parseCityFromQuery(q);
+  if (possibleCity && possibleCity !== currentCity) {
+    currentCity = possibleCity;
+    await refreshCity(currentCity);
+  }
+
+  await handleAiQuery(q, options);
+}
+
+// SEARCH UI
+function setupSearch() {
+  const btn = document.getElementById("search-btn");
+  const input = document.getElementById("search-input");
+
+  if (btn) {
+    btn.addEventListener("click", async () => {
+      if (!input) return;
+      const q = input.value.trim();
+      if (!q) return;
+      await handleUserQuery(q, { speak: false });
+    });
+  }
+
   if (input) {
-    input.addEventListener("keydown", (e) => {
+    input.addEventListener("keydown", async (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        doSearchFromInput();
+        const q = input.value.trim();
+        if (!q) return;
+        await handleUserQuery(q, { speak: false });
       }
     });
   }
 }
 
-// glas
+// VOICE / "Hey TBW" – kontinuirano dok ne klikneš opet
 function setupVoice() {
-  const micBtn = $("#mic-btn");
+  const micBtn = document.getElementById("mic-btn");
   if (!micBtn) return;
 
   const SpeechRecognition =
@@ -854,33 +961,54 @@ function setupVoice() {
   recognition = new SpeechRecognition();
   recognition.lang = "hr-HR";
   recognition.interimResults = false;
+  recognition.continuous = true;
   recognition.maxAlternatives = 1;
 
   recognition.addEventListener("result", async (event) => {
-    const transcript =
-      event.results[0] && event.results[0][0]
-        ? event.results[0][0].transcript
-        : "";
-    const input = $("#search-input");
-    if (input) input.value = transcript;
-    await handleVoiceCommand(transcript);
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const res = event.results[i];
+      if (!res.isFinal) continue;
+      const transcript = res[0]?.transcript || "";
+      const input = document.getElementById("search-input");
+      if (input) input.value = transcript;
+      await handleUserQuery(transcript, { speak: true });
+    }
   });
 
   recognition.addEventListener("end", () => {
-    micActive = false;
-    micBtn.classList.remove("mic-on");
+    if (micActive) {
+      // ponovno pokreni za kontinuirano slušanje
+      try {
+        recognition.start();
+      } catch (e) {
+        console.warn("Recognition restart error", e);
+        micActive = false;
+        micBtn.classList.remove("mic-on");
+      }
+    } else {
+      micBtn.classList.remove("mic-on");
+    }
   });
 
   micBtn.addEventListener("click", () => {
     if (micActive) {
-      recognition.stop();
       micActive = false;
       micBtn.classList.remove("mic-on");
+      try {
+        recognition.stop();
+      } catch (e) {
+        console.warn("Recognition stop error", e);
+      }
     } else {
       micActive = true;
       micBtn.classList.add("mic-on");
-      recognition.start();
-      speak("Slušam. Reci Hey TBW i svoju naredbu.");
+      try {
+        recognition.start();
+      } catch (e) {
+        console.warn("Recognition start error", e);
+        micActive = false;
+        micBtn.classList.remove("mic-on");
+      }
     }
   });
 }
@@ -888,12 +1016,12 @@ function setupVoice() {
 // ---------------------------------------------
 // REFRESH SVEGA ZA GRAD
 // ---------------------------------------------
-async function refreshCity(city, options = {}) {
+async function refreshCity(city) {
   if (!city) return;
   currentCity = city;
-  setText("hero-city-pill", city);
 
-  const skipBooking = options.skipBooking === true;
+  const heroPill = document.getElementById("hero-city-pill");
+  if (heroPill) heroPill.textContent = city;
 
   await Promise.all([
     loadHero(),
@@ -908,9 +1036,8 @@ async function refreshCity(city, options = {}) {
     loadExtendedCity(),
     loadTruck(),
     loadRouteDefault(),
-    loadLivecam(),
+    loadBooking(),
     loadPremium(),
-    skipBooking ? Promise.resolve() : loadBooking(),
   ]);
 
   startTicker();
@@ -920,18 +1047,16 @@ async function refreshCity(city, options = {}) {
 // INIT
 // ---------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
-  runIntro();
+  playIntroSequence();
   setupLegalOverlay();
   setupFullscreen();
   setupRouteForm();
   setupSearch();
   setupVoice();
   setupSafetyActions();
-  loadSafetyCard();
 
   const accepted = localStorage.getItem("tbw_legal_accepted") === "1";
   if (accepted) {
     refreshCity(currentCity);
-    startTicker();
   }
 });
