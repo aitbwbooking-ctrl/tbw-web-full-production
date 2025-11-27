@@ -1,25 +1,28 @@
 // TBW AI PREMIUM NAVIGATOR – FRONTEND
-// Radi uz backend /api/tbw (server/tbw.js + api/tbw.js)
+// Radi uz backend /api/tbw (tbw.js)
 
 const API_BASE = "/api/tbw";
 
+// Globalni state
 let currentCity = "Split";
 let tickerTimer = null;
 let micActive = false;
 let recognition = null;
 let pendingEmergencyPrompt = false;
 
-// trial/premium state
+// trial/premium/demo mode
+let tbwMode = "trial"; // "trial" | "demo" | "premium"
 const TRIAL_DAYS = 3;
-const LS_TRIAL_START = "tbw_trial_start";
-const LS_TRIAL_MODE = "tbw_trial_mode"; // "trial" | "expired"
-const LS_USER_ID = "tbw_user_id";
 
-let currentPlan = {
-  mode: "free", // "free" | "trial" | "demo" | "premium" | "founder"
-  label: "Free mode",
-  trialRemainingDays: null,
-};
+// localStorage keys
+const LS_TRIAL_START = "tbw_trial_start";
+const LS_PREMIUM_STATUS = "tbw_premium_status";
+const LS_FOUNDER_KEY = "tbw_founder_key";
+const LS_LEGAL_ACCEPTED = "tbw_legal_accepted";
+const LS_LOC_PROMPTED = "tbw_loc_prompted";
+const LS_USER_ID = "tbw_user_id";
+const SOS_KEY = "tbw_sos_profile";
+const ICE_KEY = "tbw_ice_contacts";
 
 // ---------------------------------------------
 // POMOĆNE FUNKCIJE
@@ -33,6 +36,11 @@ function setText(id, text) {
   if (el) el.textContent = text;
 }
 
+function nowMs() {
+  return Date.now();
+}
+
+// API poziv
 async function callRoute(route, params = {}) {
   const url = new URL(API_BASE, window.location.origin);
   url.searchParams.set("route", route);
@@ -46,23 +54,122 @@ async function callRoute(route, params = {}) {
     }
   });
 
-  const res = await fetch(url.toString());
+  const headers = {};
+
+  // Founder key header
+  const founderKey = localStorage.getItem(LS_FOUNDER_KEY);
+  if (founderKey) {
+    headers["x-founder-key"] = founderKey;
+  }
+
+  // Jedinstveni userId header (za premium i blocked)
+  let userId = localStorage.getItem(LS_USER_ID);
+  if (!userId) {
+    userId = "user-" + Math.random().toString(36).slice(2);
+    localStorage.setItem(LS_USER_ID, userId);
+  }
+  headers["x-user-id"] = userId;
+
+  const res = await fetch(url.toString(), { headers });
   if (!res.ok) throw new Error(`API ${route} error ${res.status}`);
   return res.json();
 }
 
+// TTS
 function speakOut(text) {
   if (!("speechSynthesis" in window)) return;
+  if (!text) return;
+
   const utter = new SpeechSynthesisUtterance(text);
+
   const voices = window.speechSynthesis.getVoices() || [];
-  const hrVoice =
-    voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("hr")) ||
-    voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("sr")) ||
-    null;
-  if (hrVoice) utter.voice = hrVoice;
+  // pokušaj pronaći lokalni jezik, inače eng
+  const lang = navigator.language || "hr-HR";
+  const langLower = lang.toLowerCase();
+
+  let best = voices.find(
+    (v) => v.lang && v.lang.toLowerCase().startsWith(langLower.slice(0, 2))
+  );
+  if (!best) {
+    best = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("en"));
+  }
+  if (best) utter.voice = best;
+
   utter.rate = 1;
   utter.pitch = 1;
   window.speechSynthesis.speak(utter);
+}
+
+// ---------------------------------------------
+// TRIAL / DEMO / PREMIUM MODE
+// ---------------------------------------------
+function evaluateMode(premiumStatus) {
+  const premiumFlag =
+    premiumStatus === "premium" || premiumStatus === "lifetime";
+
+  if (premiumFlag) {
+    tbwMode = "premium";
+    localStorage.setItem(LS_PREMIUM_STATUS, "premium");
+    const badge = document.getElementById("premium-badge");
+    if (badge) {
+      badge.textContent = "Premium";
+      badge.classList.add("premium-on");
+    }
+    return;
+  }
+
+  // Nije premium → trial ili demo
+  const trialStartRaw = localStorage.getItem(LS_TRIAL_START);
+  const now = nowMs();
+
+  if (!trialStartRaw) {
+    // pokrećemo trial
+    localStorage.setItem(LS_TRIAL_START, String(now));
+    tbwMode = "trial";
+  } else {
+    const start = parseInt(trialStartRaw, 10);
+    const diffDays = (now - start) / (1000 * 60 * 60 * 24);
+    if (diffDays < TRIAL_DAYS) {
+      tbwMode = "trial";
+    } else {
+      tbwMode = "demo";
+    }
+  }
+
+  const badge = document.getElementById("premium-badge");
+  if (!badge) return;
+
+  if (tbwMode === "trial") {
+    badge.textContent = "Free trial";
+    badge.classList.remove("premium-on");
+  } else if (tbwMode === "demo") {
+    badge.textContent = "Demo mode";
+    badge.classList.remove("premium-on");
+  }
+}
+
+// Klik na badge → unesi founder key
+function setupPremiumBadgeClick() {
+  const badge = document.getElementById("premium-badge");
+  if (!badge) return;
+
+  badge.addEventListener("click", () => {
+    const val = prompt(
+      "Founder / Premium key (ostavi prazno za brisanje):",
+      localStorage.getItem(LS_FOUNDER_KEY) || ""
+    );
+    if (val === null) return;
+
+    const trimmed = val.trim();
+    if (!trimmed) {
+      localStorage.removeItem(LS_FOUNDER_KEY);
+      alert("Founder key obrisan.");
+    } else {
+      localStorage.setItem(LS_FOUNDER_KEY, trimmed);
+      alert("Founder key spremljen. Pokušavam osvježiti premium status…");
+      loadPremium();
+    }
+  });
 }
 
 // ---------------------------------------------
@@ -73,7 +180,8 @@ function playIntroSequence() {
   const miniIntro = document.getElementById("intro-mini");
   if (!fullIntro || !miniIntro) return;
 
-  const hasShownFull = localStorage.getItem("tbw_intro_full_shown") === "1";
+  const hasShownFull =
+    localStorage.getItem("tbw_intro_full_shown") === "1";
 
   function showMini() {
     miniIntro.classList.remove("hidden");
@@ -95,83 +203,6 @@ function playIntroSequence() {
 }
 
 // ---------------------------------------------
-// TRIAL / PREMIUM STANJE
-// ---------------------------------------------
-function ensureUserId() {
-  let id = localStorage.getItem(LS_USER_ID);
-  if (!id) {
-    id = "user-" + Math.random().toString(36).slice(2);
-    localStorage.setItem(LS_USER_ID, id);
-  }
-  return id;
-}
-
-function initTrialState() {
-  const now = Date.now();
-  let mode = localStorage.getItem(LS_TRIAL_MODE);
-  let start = localStorage.getItem(LS_TRIAL_START);
-
-  if (!start) {
-    // prvi put – automatski start triala
-    start = now.toString();
-    localStorage.setItem(LS_TRIAL_START, start);
-    localStorage.setItem(LS_TRIAL_MODE, "trial");
-    mode = "trial";
-  }
-
-  const startMs = parseInt(start, 10);
-  const elapsedDays = (now - startMs) / (1000 * 60 * 60 * 24);
-  let remaining = Math.max(0, TRIAL_DAYS - Math.floor(elapsedDays));
-
-  if (elapsedDays >= TRIAL_DAYS) {
-    mode = "expired";
-    remaining = 0;
-    localStorage.setItem(LS_TRIAL_MODE, "expired");
-  }
-
-  if (mode === "trial") {
-    currentPlan.mode = "trial";
-    currentPlan.label = remaining === 1 ? "Free trial · 1 day" : `Free trial · ${remaining} days`;
-    currentPlan.trialRemainingDays = remaining;
-  } else {
-    currentPlan.mode = "demo";
-    currentPlan.label = "Demo mode";
-    currentPlan.trialRemainingDays = 0;
-  }
-
-  updatePremiumBadge();
-}
-
-function setPremiumModeFromServer(data) {
-  // data: { status: "free"|"premium"|"founder", tier?, plan? }
-  if (!data || !data.status || data.status === "free") {
-    // zadrži local trial/demo logiku
-    return;
-  }
-
-  if (data.status === "premium") {
-    currentPlan.mode = "premium";
-    currentPlan.label = data.tier === "founder" ? "Founder premium" : "Premium";
-  } else if (data.status === "founder") {
-    currentPlan.mode = "founder";
-    currentPlan.label = "Founder premium";
-  }
-
-  updatePremiumBadge();
-}
-
-function updatePremiumBadge() {
-  const badge = document.getElementById("premium-badge");
-  if (!badge) return;
-  badge.textContent = currentPlan.label;
-  if (currentPlan.mode === "premium" || currentPlan.mode === "founder") {
-    badge.classList.add("premium-on");
-  } else {
-    badge.classList.remove("premium-on");
-  }
-}
-
-// ---------------------------------------------
 // LEGAL OVERLAY + LOKACIJA
 // ---------------------------------------------
 function setupLegalOverlay() {
@@ -182,7 +213,7 @@ function setupLegalOverlay() {
 
   if (!overlay || !chkTerms || !chkRobot || !btn) return;
 
-  const accepted = localStorage.getItem("tbw_legal_accepted") === "1";
+  const accepted = localStorage.getItem(LS_LEGAL_ACCEPTED) === "1";
 
   function updateBtn() {
     btn.disabled = !(chkTerms.checked && chkRobot.checked);
@@ -192,7 +223,7 @@ function setupLegalOverlay() {
   chkRobot.addEventListener("change", updateBtn);
 
   btn.addEventListener("click", () => {
-    localStorage.setItem("tbw_legal_accepted", "1");
+    localStorage.setItem(LS_LEGAL_ACCEPTED, "1");
     overlay.classList.add("hidden");
     showLocationModalOnce();
     refreshCity(currentCity);
@@ -211,7 +242,7 @@ function showLocationModalOnce() {
   const modal = document.getElementById("location-modal");
   if (!modal) return;
 
-  const already = localStorage.getItem("tbw_loc_prompted") === "1";
+  const already = localStorage.getItem(LS_LOC_PROMPTED) === "1";
   if (already) return;
 
   const allowBtn = document.getElementById("location-allow");
@@ -221,7 +252,7 @@ function showLocationModalOnce() {
 
   function close() {
     modal.classList.add("hidden");
-    localStorage.setItem("tbw_loc_prompted", "1");
+    localStorage.setItem(LS_LOC_PROMPTED, "1");
   }
 
   allowBtn.addEventListener("click", () => {
@@ -229,7 +260,7 @@ function showLocationModalOnce() {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         () => {
-          // Ovdje bi išlo reverse geocoding → grad
+          // Ovdje ide reverse geocoding → grad, za sada ostavljamo currentCity
         },
         () => {}
       );
@@ -310,88 +341,31 @@ async function updateTicker() {
 function startTicker() {
   if (tickerTimer) clearInterval(tickerTimer);
   updateTicker();
-  tickerTimer = setInterval(updateTicker, 69 * 1000); // 69 s refresh
+  tickerTimer = setInterval(updateTicker, 69 * 1000); // refresh svakih 69s
 }
 
 // ---------------------------------------------
-// HERO + VRIJEME ANIMACIJA
+// PUNJENJE KARTICA
 // ---------------------------------------------
 async function loadHero() {
   try {
     const data = await callRoute("hero");
     const img = document.getElementById("hero-img");
     const pill = document.getElementById("hero-city-pill");
-    if (img && data.image) {
-      img.src = data.image;
+    if (img && data.images && data.images.length > 0) {
+      img.src = data.images[0];
     }
     if (pill) {
       pill.textContent = data.city || currentCity;
     }
-    if (data.weather) {
-      drawWeatherOverlay(data.weather);
-    }
+
+    // jednostavni hero efekti – snijeg / kiša prema vremenu
+    applyWeatherEffects();
   } catch (e) {
     console.error("hero", e);
   }
 }
 
-function drawWeatherOverlay(type) {
-  const canvas = document.getElementById("hero-weather-overlay");
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width;
-  canvas.height = rect.height;
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (type !== "snow" && type !== "rain") return;
-
-  const drops = [];
-  const count = 80;
-  for (let i = 0; i < count; i++) {
-    drops.push({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
-      speed: 0.5 + Math.random() * 1.5,
-      length: type === "rain" ? 10 + Math.random() * 15 : 3 + Math.random() * 5,
-      wobble: Math.random() * 0.4,
-    });
-  }
-
-  function frame() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = type === "snow" ? "rgba(226, 232, 240, 0.9)" : "rgba(96, 165, 250, 0.9)";
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.lineWidth = type === "rain" ? 1.2 : 0.8;
-
-    drops.forEach((d) => {
-      d.y += d.speed;
-      d.x += d.wobble;
-      if (d.y > canvas.height) {
-        d.y = -10;
-        d.x = Math.random() * canvas.width;
-      }
-      if (type === "snow") {
-        ctx.beginPath();
-        ctx.arc(d.x, d.y, 1.2, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.beginPath();
-        ctx.moveTo(d.x, d.y);
-        ctx.lineTo(d.x, d.y + d.length);
-        ctx.stroke();
-      }
-    });
-
-    requestAnimationFrame(frame);
-  }
-
-  frame();
-}
-
-// ---------------------------------------------
-// PUNJENJE KARTICA
-// ---------------------------------------------
 async function loadWeather() {
   try {
     const data = await callRoute("weather");
@@ -404,9 +378,6 @@ async function loadWeather() {
       "weather-cond",
       data.condition ? data.condition : "Nema podataka."
     );
-    if (data.overlay) {
-      drawWeatherOverlay(data.overlay);
-    }
   } catch (e) {
     console.error("weather", e);
     setText("weather-cond", "Greška pri dohvaćanju vremena.");
@@ -453,7 +424,9 @@ async function loadTransit() {
         const li = document.createElement("li");
         li.textContent = `Linija ${b.line}: ${b.from} → ${b.to}, polazak za ${
           b.nextDepartureMinutes
-        } min${b.delayMinutes ? ` (kašnjenje ${b.delayMinutes} min)` : ""}`;
+        } min${
+          b.delayMinutes ? ` (kašnjenje ${b.delayMinutes} min)` : ""
+        }`;
         busList.appendChild(li);
       });
     }
@@ -636,7 +609,7 @@ async function loadBooking() {
     } else {
       setText(
         "booking-status",
-        "Za više opcija otvorit ćeš Booking, Airbnb ili druge servise."
+        "Za više opcija otvorit ćeš Booking ili druge servise."
       );
     }
   } catch (e) {
@@ -645,51 +618,44 @@ async function loadBooking() {
   }
 }
 
-// premium badge
+// premium status
 async function loadPremium() {
   try {
     const badge = document.getElementById("premium-badge");
     if (!badge) return;
 
-    const userId = ensureUserId();
+    // userId već generiran u callRoute
+    let userId = localStorage.getItem(LS_USER_ID);
+    if (!userId) {
+      userId = "user-" + Math.random().toString(36).slice(2);
+      localStorage.setItem(LS_USER_ID, userId);
+    }
 
     const url = new URL(API_BASE, window.location.origin);
     url.searchParams.set("route", "premium");
     url.searchParams.set("userId", userId);
 
-    const res = await fetch(url.toString());
+    const headers = {};
+    const founderKey = localStorage.getItem(LS_FOUNDER_KEY);
+    if (founderKey) headers["x-founder-key"] = founderKey;
+
+    const res = await fetch(url.toString(), { headers });
     if (!res.ok) throw new Error("premium error");
     const data = await res.json();
 
-    setPremiumModeFromServer(data);
+    evaluateMode(data.status);
+
   } catch (e) {
     console.error("premium", e);
-  }
-}
-
-// EVENTS
-async function loadEvents() {
-  try {
-    const data = await callRoute("events");
-    const list = document.getElementById("events-list");
-    if (!list) return;
-    list.innerHTML = "";
-    (data.list || []).forEach((ev) => {
-      const li = document.createElement("li");
-      li.textContent = `${ev.name} – ${ev.date}`;
-      list.appendChild(li);
-    });
-  } catch (e) {
-    console.error("events", e);
+    // Ako backend ne radi, ostavi trial/demo logiku bez premium
+    const stored = localStorage.getItem(LS_PREMIUM_STATUS);
+    evaluateMode(stored || "free");
   }
 }
 
 // ---------------------------------------------
-// SIGURNOST & SOS (localStorage)
+// SIGURNOST & SOS
 // ---------------------------------------------
-const SOS_KEY = "tbw_sos_profile";
-const ICE_KEY = "tbw_ice_contacts";
-
 function loadSafetyPanel() {
   const sosSummary = document.getElementById("sos-summary");
   const iceList = document.getElementById("ice-list");
@@ -738,7 +704,7 @@ function setupSafetyActions() {
   if (sosEdit) {
     sosEdit.addEventListener("click", () => {
       const name = prompt("Ime i prezime (SOS profil):", "");
-      const blood = prompt("Krvna grupa (npr. 0-, A+, nepoznato):", "");
+      const blood = prompt("Krvna grupa (npr. 0-, A+, 'nepoznato'):", "");
       const allergies = prompt("Alergije (ako nema, upiši 'nema'):", "");
       const meds = prompt("Važna terapija / lijekovi:", "");
       const iceRaw = prompt(
@@ -762,7 +728,7 @@ function setupSafetyActions() {
       }
 
       loadSafetyPanel();
-      alert("SOS profil i ICE kontakti su spremljeni u ovom uređaju.");
+      alert("SOS profil i ICE kontakti su spremljeni na ovaj uređaj.");
     });
   }
 
@@ -865,7 +831,7 @@ function detectIntents(lower) {
   const intents = [];
 
   if (
-    /apartman|smještaj|smjestaj|hotel|booking|airbnb|expedia|noćenje|nocenje/.test(lower)
+    /apartman|smještaj|hotel|booking|airbnb|noćenje/.test(lower)
   ) {
     intents.push("booking");
   }
@@ -878,7 +844,7 @@ function detectIntents(lower) {
   if (/more|valovit|sea state|valovi/.test(lower)) {
     intents.push("sea");
   }
-  if (/avion|let|aerodrom|zračna luka|zracna luka|flight/.test(lower)) {
+  if (/avion|let|aerodrom|zračna luka|flight/.test(lower)) {
     intents.push("airport");
   }
   if (/ruta|put|navigiraj|navigacija|idem prema|vozim/.test(lower)) {
@@ -889,9 +855,6 @@ function detectIntents(lower) {
   }
   if (/nesreć|nesrece|accident|sudar/.test(lower)) {
     intents.push("emergency");
-  }
-  if (/event|koncert|festival|party|club/.test(lower)) {
-    intents.push("events");
   }
   return intents;
 }
@@ -948,8 +911,8 @@ async function handleAiQuery(query, options = {}) {
   if (intents.includes("airport")) tasks.push(loadAirport());
   if (intents.includes("booking")) tasks.push(loadBooking());
   if (intents.includes("truck")) tasks.push(loadTruck());
-  if (intents.includes("events")) tasks.push(loadEvents());
 
+  // Ako je nav/route → izračunaj rutu
   let routeData = null;
   if (intents.includes("route") || intents.includes("traffic")) {
     try {
@@ -974,15 +937,16 @@ async function handleAiQuery(query, options = {}) {
 
   await Promise.allSettled(tasks);
 
+  // ODGOVOR KOJI ZVUČI LJUDSKO
   if (intents.includes("traffic")) {
-    const trafficCard = document.getElementById("traffic-status");
-    const levelEl = document.getElementById("traffic-level");
-    const tStatus = trafficCard ? trafficCard.textContent : "";
-    const tLevel = levelEl ? levelEl.textContent : "";
+    const tStatus = document.getElementById("traffic-status")?.textContent || "";
+    const tLevel = document.getElementById("traffic-level")?.textContent || "";
     let part = `Prema ${destinationCity} promet je: ${tStatus.toLowerCase()}.`;
-    if (tLevel) part += ` Trenutna prosječna brzina je ${tLevel.replace("Brzina: ", "")}.`;
+    if (tLevel) {
+      part += ` Prosječna brzina je ${tLevel.replace("Brzina: ", "")}.`;
+    }
     if (routeData && routeData.duration) {
-      part += ` Po tvojoj ruti, put će trajati otprilike ${routeData.duration}.`;
+      part += ` Na tvojoj ruti put će trajati otprilike ${routeData.duration}.`;
     }
     responses.push(part);
   }
@@ -1016,7 +980,7 @@ async function handleAiQuery(query, options = {}) {
     )}`;
     const part =
       `Za smještaj u ${bCity} mogu ti predložiti da pogledaš aktualne ponude. ` +
-      `Otvorit ću ti Booking s filtriranim gradom.`;
+      `Otvorit ću ti Booking s tim gradom.`;
     const urlEl = document.getElementById("booking-url");
     const wrap = document.getElementById("booking-url-wrap");
     if (urlEl && wrap) {
@@ -1026,25 +990,27 @@ async function handleAiQuery(query, options = {}) {
     responses.push(part);
   }
 
-  if (intents.includes("events")) {
-    responses.push(
-      "Prikazujem aktualne evente i festivale za tvoj grad na kartici 'Eventi & festivali'."
-    );
-  }
-
   if (intents.length === 0) {
     responses.push(
-      "Razumijem te. Možeš pitati za promet, vrijeme, smještaj, rutu, more, aerodrom, evente ili prijaviti nesreću."
+      "Razumijem te. Možeš pitati za promet, vrijeme, smještaj, rutu, more, aerodrom ili prijaviti nesreću."
     );
   }
 
   const finalText = responses.join(" ");
 
-  setText("nav-ai-response", finalText);
-  if (speak && finalText) speakOut(finalText);
+  // DEMO LIMIT – blaži odgovori
+  if (tbwMode === "demo") {
+    const demoText =
+      finalText +
+      " Napomena: trenutno si u demo modu. Za potpune AI odgovore i sve funkcije aktiviraj premium pretplatu.";
+    setText("nav-ai-response", demoText);
+    if (speak) speakOut(demoText);
+  } else {
+    setText("nav-ai-response", finalText);
+    if (speak) speakOut(finalText);
+  }
 }
 
-// Glavna funkcija koja spaja pretragu i AI
 async function handleUserQuery(rawQuery, options = {}) {
   if (!rawQuery || !rawQuery.trim()) return;
   const q = rawQuery.trim();
@@ -1084,7 +1050,7 @@ function setupSearch() {
   }
 }
 
-// VOICE / "Hey TBW" – kontinuirano dok ne klikneš opet
+// VOICE – kontinuirano dok ne pritisneš ponovno
 function setupVoice() {
   const micBtn = document.getElementById("mic-btn");
   if (!micBtn) return;
@@ -1153,67 +1119,34 @@ function setupVoice() {
 }
 
 // ---------------------------------------------
-// PREMIUM MODAL / FOUNDER KEY
+// HERO WEATHER EFEKTI (snijeg / kiša)
 // ---------------------------------------------
-function setupPremiumModal() {
-  const badge = document.getElementById("premium-badge");
-  const modal = document.getElementById("premium-modal");
-  const closeBtn = document.getElementById("premium-close-btn");
-  const statusText = document.getElementById("premium-status-text");
-  const founderInput = document.getElementById("founder-key-input");
-  const founderBtn = document.getElementById("founder-activate-btn");
+function applyWeatherEffects() {
+  const cond = document.getElementById("weather-cond")?.textContent || "";
+  const effects = document.getElementById("hero-effects");
+  if (!effects) return;
+  effects.innerHTML = "";
 
-  if (!badge || !modal || !closeBtn || !statusText || !founderInput || !founderBtn)
-    return;
+  const c = cond.toLowerCase();
+  if (!c) return;
 
-  function refreshText() {
-    if (currentPlan.mode === "premium" || currentPlan.mode === "founder") {
-      statusText.textContent =
-        "Premium je aktivan na ovom uređaju. Pretplate se automatski obnavljaju preko trgovine.";
-    } else if (currentPlan.mode === "trial") {
-      statusText.textContent = `Free trial je aktivan. Preostalo dana: ${currentPlan.trialRemainingDays}. Nakon toga aplikacija prelazi u demo mod dok ne aktiviraš premium.`;
-    } else {
-      statusText.textContent =
-        "Aplikacija radi u demo modu. Možeš aktivirati premium pretplatu ili koristiti founder key (za testiranje).";
+  if (c.includes("snijeg") || c.includes("snow")) {
+    for (let i = 0; i < 20; i++) {
+      const flake = document.createElement("div");
+      flake.className = "hero-snowflake";
+      flake.style.left = Math.random() * 100 + "%";
+      flake.style.animationDelay = Math.random() * 2 + "s";
+      effects.appendChild(flake);
+    }
+  } else if (c.includes("kiša") || c.includes("rain")) {
+    for (let i = 0; i < 30; i++) {
+      const drop = document.createElement("div");
+      drop.className = "hero-raindrop";
+      drop.style.left = Math.random() * 100 + "%";
+      drop.style.animationDelay = Math.random() * 1.5 + "s";
+      effects.appendChild(drop);
     }
   }
-
-  badge.addEventListener("click", () => {
-    refreshText();
-    modal.classList.remove("hidden");
-  });
-
-  closeBtn.addEventListener("click", () => {
-    modal.classList.add("hidden");
-  });
-
-  founderBtn.addEventListener("click", async () => {
-    const key = founderInput.value.trim();
-    if (!key) return;
-    try {
-      const userId = ensureUserId();
-      const url = new URL(API_BASE, window.location.origin);
-      url.searchParams.set("route", "premium");
-      url.searchParams.set("userId", userId);
-      url.searchParams.set("founderKey", key);
-
-      const res = await fetch(url.toString());
-      if (!res.ok) throw new Error("Founder aktivacija nije uspjela.");
-      const data = await res.json();
-      if (data.status === "premium" && (data.tier === "founder" || data.status === "founder")) {
-        currentPlan.mode = "founder";
-        currentPlan.label = "Founder premium";
-        updatePremiumBadge();
-        alert("Founder premium je uspješno aktiviran na ovom uređaju.");
-        modal.classList.add("hidden");
-      } else {
-        alert("Founder key nije valjan.");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Greška pri aktivaciji founder premium pristupa.");
-    }
-  });
 }
 
 // ---------------------------------------------
@@ -1240,7 +1173,6 @@ async function refreshCity(city) {
     loadTruck(),
     loadRouteDefault(),
     loadBooking(),
-    loadEvents(),
     loadPremium(),
   ]);
 
@@ -1252,22 +1184,27 @@ async function refreshCity(city) {
 // ---------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
   playIntroSequence();
-  initTrialState();
   setupLegalOverlay();
   setupFullscreen();
   setupRouteForm();
   setupSearch();
   setupVoice();
   setupSafetyActions();
-  setupPremiumModal();
+  setupPremiumBadgeClick();
 
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/service-worker.js").catch(() => {});
-  }
+  // Postavi početni trial/demo/premium iz localStorage (prije prvog loadPremium)
+  const storedPremium = localStorage.getItem(LS_PREMIUM_STATUS) || "free";
+  evaluateMode(storedPremium);
 
-  const accepted = localStorage.getItem("tbw_legal_accepted") === "1";
+  const accepted = localStorage.getItem(LS_LEGAL_ACCEPTED) === "1";
   if (accepted) {
     refreshCity(currentCity);
   }
-});
 
+  // PWA service worker
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/service-worker.js").catch((e) =>
+      console.warn("SW error", e)
+    );
+  }
+});
