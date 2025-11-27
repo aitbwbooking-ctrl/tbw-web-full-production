@@ -1,13 +1,17 @@
 {
-  "name": "tbw-ai-premium-navigator",
+  "name": "tbw-ai-premium",
   "version": "1.0.0",
-  "description": "TBW AI PREMIUM NAVIGATOR – web + PWA + API",
+  "description": "TBW AI PREMIUM Navigator - Free Trial + Premium + Hybrid AI + Real-time APIs",
   "main": "server/tbw.js",
   "scripts": {
-    "start": "node server/tbw.js"
+    "start": "node server/tbw.js",
+    "dev": "node server/tbw.js"
   },
-  "keywords": [],
-  "author": "Dražen Halar",
-  "license": "UNLICENSED"
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "node-fetch": "^3.3.2",
+    "dotenv": "^16.3.1",
+    "@google-cloud/text-to-speech": "^5.2.0"
+  }
 }
-
