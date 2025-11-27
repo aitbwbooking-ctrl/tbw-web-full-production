@@ -1,1 +1,13 @@
+{
+  "name": "tbw-ai-premium-navigator",
+  "version": "1.0.0",
+  "description": "TBW AI PREMIUM NAVIGATOR – web + PWA + API",
+  "main": "server/tbw.js",
+  "scripts": {
+    "start": "node server/tbw.js"
+  },
+  "keywords": [],
+  "author": "Dražen Halar",
+  "license": "UNLICENSED"
+}
 
