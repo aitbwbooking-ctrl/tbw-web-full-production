@@ -1,488 +1,131 @@
 <!DOCTYPE html>
 <html lang="hr">
+
 <head>
-  <meta charset="UTF-8" />
-  <title>TBW AI PREMIUM NAVIGATOR</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#020617" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css" />
+    <meta charset="UTF-8" />
+    <title>TBW AI PREMIUM NAVIGATOR</title>
+
+    <!-- Mobile scaling -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+
+    <!-- PWA colors -->
+    <meta name="theme-color" content="#020617" />
+
+    <!-- Manifest -->
+    <link rel="manifest" href="manifest.json" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="style.css" />
 </head>
+
 <body class="tbw-body">
 
-  <!-- FULL INTRO (A) – samo prvi put  -->
-  <div id="intro-full" class="intro-full hidden">
-    <div class="intro-full-inner">
-      <h1>TBW AI PREMIUM</h1>
-      <p>Inteligentni suputnik za promet, vrijeme, more, smještaj i sigurnost.</p>
-    </div>
-  </div>
-
-  <!-- MINI INTRO (C) – svako sljedeće pokretanje, kratki fade -->
-  <div id="intro-mini" class="intro-mini hidden">
-    <span>TBW AI PREMIUM NAVIGATOR spreman.</span>
-  </div>
-
-  <!-- LEGAL OVERLAY (ENGLISH DISCLAIMER + GDPR + ROBOT CHECK) -->
-  <div id="legal-overlay" class="legal-overlay">
-    <div class="legal-window">
-      <h2>TBW AI PREMIUM NAVIGATOR – Legal Agreement</h2>
-
-      <div class="legal-scroll">
-        <h3>1. Terms of Service</h3>
-        <p>
-          This application is provided “as is”. You remain fully responsible for
-          all decisions while driving or travelling. TBW AI PREMIUM NAVIGATOR
-          is only an informational assistant and must never replace official
-          road signs, instructions from authorities or your own judgement.
-        </p>
-
-        <h3>2. Safety & Driving</h3>
-        <p>
-          Do not interact with the app while driving. Use voice control only
-          where it is legally allowed and always keep full attention on the
-          road. The developer and data providers cannot be held liable for any
-          accidents, fines, delays or damage arising from the use or misuse of
-          this application.
-        </p>
-
-        <h3>3. Privacy & GDPR</h3>
-        <p>
-          Minimal technical data may be processed to deliver AI replies,
-          weather, maps and other content. Location access is used only with
-          your explicit consent and only to improve navigation suggestions.
-          Personal data is not sold to third parties. You may revoke location
-          permission at any time in your device settings.
-        </p>
-
-        <h3>4. Third-Party Services</h3>
-        <p>
-          TBW uses external services like map providers, weather services,
-          traffic feeds and AI platforms. By continuing you also agree to their
-          terms and privacy policies. Availability and accuracy of those
-          external services is outside of the developer’s control.
-        </p>
-
-        <h3>5. Security & Malware Disclaimer</h3>
-        <p>
-          The app is distributed through official stores and is regularly
-          checked for known malware, viruses and security issues. However, no
-          software can be guaranteed to be completely free from vulnerabilities.
-          You are responsible for keeping your device’s operating system and
-          antivirus software up to date. The developer is not liable for any
-          damage caused by third-party attacks, phishing, modified versions of
-          the app or unofficial downloads.
-        </p>
-
-        <h3>6. No Financial or Booking Responsibility</h3>
-        <p>
-          Any links to booking platforms or external services are provided for
-          convenience only. All reservations, payments and contracts are made
-          solely between you and the respective provider. The developer is not
-          a travel agency and assumes no responsibility for prices, availability,
-          cancellations or quality of services booked through third-party sites.
-        </p>
-
-        <h3>7. Limitation of Liability</h3>
-        <p>
-          To the maximum extent permitted by law, the developer of TBW AI
-          PREMIUM NAVIGATOR, its partners and data providers shall not be liable
-          for any direct, indirect, incidental, consequential or special damage
-          arising from the use, inability to use or reliance on the application.
-        </p>
-
-        <h3>8. Support</h3>
-        <p>
-          For questions or issues related to this app you can contact:
-          <strong>support: ai.tbw.booking@gmail.com</strong>.
-        </p>
-      </div>
-
-      <label class="legal-check">
-        <input type="checkbox" id="agree-terms" />
-        <span>I have read and accept all terms & disclaimers.</span>
-      </label>
-
-      <label class="legal-check">
-        <input type="checkbox" id="agree-robot" />
-        <span>I confirm that I am not a robot.</span>
-      </label>
-
-      <button id="legal-accept-btn" class="btn-primary" disabled>
-        Accept and continue
-      </button>
-    </div>
-  </div>
-
-  <!-- MODAL ZA LOKACIJU -->
-  <div id="location-modal" class="location-modal hidden">
-    <div class="location-window">
-      <h3>Omogućiti pristup lokaciji?</h3>
-      <p>
-        Lokacija se koristi samo za poboljšanje navigacije i prikaza lokalnih
-        usluga. Možeš ju kasnije isključiti u postavkama uređaja.
-      </p>
-      <div class="location-actions">
-        <button id="location-allow" class="btn-primary">Uključi lokaciju</button>
-        <button id="location-deny" class="btn-ghost">Odbij</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- PREMIUM / FOUNDER MODAL -->
-  <div id="premium-modal" class="premium-modal hidden">
-    <div class="premium-window">
-      <h3>TBW Premium kontrolni panel</h3>
-      <p id="premium-status-text" class="premium-status-text"></p>
-
-      <div class="premium-field">
-        <label for="founder-key-input">Founder key</label>
-        <input id="founder-key-input" type="password" placeholder="Unesi founder key" />
-      </div>
-
-      <div class="premium-actions">
-        <button id="founder-activate-btn" class="btn-primary small">Aktiviraj founder</button>
-        <button id="premium-close-btn" class="btn-ghost small">Zatvori</button>
-      </div>
-
-      <p class="premium-note">
-        Pretplate (mjesecne/godišnje) će se aktivirati preko Google Play
-        obračuna. Ovaj ekran služi i za testiranje founder premium pristupa.
-      </p>
-    </div>
-  </div>
-
-  <!-- FULLSCREEN OVERLAY ZA PROZORE -->
-  <div id="fullscreen-overlay" class="fullscreen-overlay hidden">
-    <div class="fullscreen-inner">
-      <button id="fullscreen-exit" class="fullscreen-exit">✕ Exit</button>
-      <div id="fullscreen-content"></div>
-    </div>
-  </div>
-
-  <!-- GLAVNA APLIKACIJA -->
-  <div class="app-shell">
-
-    <!-- TICKER + BRAND HEADER (FIKSNO NA VRHU) -->
-    <div class="top-shell">
-
-      <div id="ticker" class="ticker-bar">
-        Učitavanje prometnih i sigurnosnih obavijesti…
-      </div>
-
-      <div class="brand-row">
-        <div class="brand-center">
-          <h1 class="brand-title">TBW AI PREMIUM</h1>
-          <div class="brand-subtitle">
-            Prometna upozorenja · Vrijeme · Stanje mora · Nesreće · Alert!
-          </div>
+    <!-- ============================= -->
+    <!-- INTRO – FULL (samo prvi put) -->
+    <!-- ============================= -->
+    <div id="intro-full" class="intro-full hidden">
+        <div class="intro-full-inner">
+            <h1>TBW AI PREMIUM</h1>
+            <p>Inteligentni suputnik za promet, vrijeme, more, nesreće, letove i smještaj.</p>
+            <button id="intro-start-btn">Započni</button>
         </div>
-        <div id="premium-badge" class="premium-badge" title="Dodirni za premium postavke">
-          Free mode
-        </div>
-      </div>
-
-      <!-- HERO SLIKA + GRAD PILL -->
-      <header class="hero hero-image">
-        <div class="hero-image-wrapper">
-          <img id="hero-img" src="assets/placeholder-hero.jpg" alt="TBW hero" />
-          <div class="hero-overlay-top">
-            <button id="hero-city-pill" class="hero-city-pill">Split</button>
-          </div>
-          <canvas id="hero-weather-overlay" class="hero-weather-overlay"></canvas>
-        </div>
-
-        <!-- GLAVNA TRAŽILICA -->
-        <section class="search-section hero-search">
-          <div class="search-input-wrap">
-            <input
-              id="search-input"
-              type="text"
-              placeholder="Split apartmani, hotel u Zadru, put za Zagreb…"
-              autocomplete="off"
-            />
-            <button id="search-btn" class="btn-primary">Pretraži</button>
-            <button id="mic-btn" class="mic-btn" title="Glasovno pretraživanje">
-              <span class="mic-dot"></span>
-            </button>
-          </div>
-          <p class="search-hint">
-            Glas: reci npr. “Hey TBW, nađi mi apartmane u Splitu za vikend”
-            ili “Hey TBW, idem prema Zagrebu, kakav je promet ispred mene?”.
-          </p>
-        </section>
-      </header>
     </div>
 
-    <!-- GLAVNI GRID PROZORA (SKROL GORE/DOLJE) -->
-    <main class="cards-grid">
+    <!-- ============================= -->
+    <!-- NAVIGACIJA – gornji naslov -->
+    <!-- ============================= -->
+    <header class="tbw-header">
+        <h2>TBW AI PREMIUM</h2>
+        <p class="header-sub">
+            Prometna upozorenja · Vrijeme · Stanje mora · Nesreće · Alert
+        </p>
+        <button id="lang-btn" class="lang-btn">🌐</button>
+    </header>
 
-      <!-- PRVI RED: NAVIGACIJA + BOOKING -->
-      <article class="card card-wide" data-card="navigation">
-        <div class="card-header">
-          <h2>Navigacija</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body nav-body">
-          <div class="nav-main">
-            <div class="nav-route-label">Aktivna ruta</div>
-            <div id="nav-current-route" class="nav-current-route">Nema aktivne rute.</div>
-          </div>
-          <div class="nav-meta">
-            <div>
-              <div class="nav-meta-label">Smjer</div>
-              <div id="nav-direction" class="nav-meta-value">–</div>
-            </div>
-            <div>
-              <div class="nav-meta-label">ETA</div>
-              <div id="nav-eta" class="nav-meta-value">–</div>
-            </div>
-            <div>
-              <div class="nav-meta-label">Profil</div>
-              <div id="nav-profile" class="nav-meta-value">Osobni</div>
-            </div>
-          </div>
-          <div id="nav-ai-response" class="nav-ai-response">
-            Razumijem te. Možeš pitati za promet, vrijeme, smještaj, rutu, more,
-            aerodrom ili prijaviti nesreću.
-          </div>
-        </div>
-      </article>
+    <!-- ============================= -->
+    <!-- HERO – slika + dinamična animacija -->
+    <!-- ============================= -->
+    <section class="hero">
+        <img id="hero-image" src="assets/placeholder-hero.jpg" alt="TBW Hero" class="hero-img" />
+        <canvas id="hero-effects"></canvas> <!-- snijeg / kiša / sunce -->
+    </section>
 
-      <article class="card card-wide" data-card="booking">
-        <div class="card-header">
-          <h2>Rezervacija smještaja</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body booking-body">
-          <div class="booking-row">
-            <div>
-              <div class="booking-label">Lokacija</div>
-              <div id="booking-city" class="booking-value">Split</div>
-            </div>
-            <div>
-              <div class="booking-label">Datumi</div>
-              <div id="booking-dates" class="booking-value">Nije zadano</div>
-            </div>
-            <div>
-              <div class="booking-label">Cijena</div>
-              <div id="booking-price" class="booking-value">Varijabilno</div>
-            </div>
-          </div>
-          <div id="booking-url-wrap" class="booking-url-wrap hidden">
-            <a id="booking-url" href="#" target="_blank" rel="noopener" class="btn-ghost small">
-              Otvori ponude
-            </a>
-          </div>
-          <div id="booking-status" class="card-subtext">
-            Otvorit ćeš Booking ili druge servise s odabranim gradom.
-          </div>
-        </div>
-      </article>
+    <!-- ============================= -->
+    <!-- MAIN SEARCH -->
+    <!-- ============================= -->
+    <div class="main-search-box">
+        <input id="main-search" class="main-search" placeholder="Upiši grad..." autocomplete="off" />
+        <button id="voice-btn" class="voice-btn">🎤</button>
+    </div>
 
-      <!-- DRUGI RED: VRIJEME / PROMET / AERODROMI -->
-      <article class="card" data-card="weather">
-        <div class="card-header">
-          <h2>Vrijeme</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body">
-          <div id="weather-temp" class="card-main-value">--°C</div>
-          <div id="weather-cond" class="card-subtext">Učitavanje…</div>
-        </div>
-      </article>
+    <!-- ============================= -->
+    <!-- TICKER (promet, nesreće, vrijeme...) -->
+    <!-- ============================= -->
+    <div id="ticker" class="ticker"></div>
 
-      <article class="card" data-card="traffic">
-        <div class="card-header">
-          <h2>Promet uživo</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body">
-          <div id="traffic-status" class="card-main-value">Učitavanje…</div>
-          <div id="traffic-level" class="card-subtext"></div>
-        </div>
-      </article>
+    <!-- ============================= -->
+    <!-- GRID – Glavni info blokovi -->
+    <!-- ============================= -->
+    <section class="main-grid">
 
-      <article class="card" data-card="airport">
-        <div class="card-header">
-          <h2>Aerodromi</h2>
-          <button class="card-expand">⤢</button>
+        <!-- Navigacija -->
+        <div class="card" id="nav-card">
+            <h3>Navigacija</h3>
+            <p id="nav-road">Učitavanje rute...</p>
+            <p><strong id="nav-city"></strong></p>
         </div>
-        <div class="card-body">
-          <div id="airport-code" class="card-main-value">---</div>
-          <div id="airport-status" class="card-subtext">Učitavanje…</div>
-        </div>
-      </article>
 
-      <!-- OSTALO – SCROLL DIO -->
+        <!-- Booking -->
+        <div class="card" id="booking-card">
+            <h3>Rezervacija smještaja</h3>
+            <p>Lokacija: <span id="book-loc">–</span></p>
+            <p>Dolazak: <span id="book-date">–</span></p>
+            <p>Cijena: <span id="book-price">–</span></p>
+        </div>
 
-      <article class="card" data-card="sea">
-        <div class="card-header">
-          <h2>Stanje mora</h2>
-          <button class="card-expand">⤢</button>
+        <!-- Vrijeme -->
+        <div class="card" id="weather-card">
+            <h3>Vrijeme</h3>
+            <p id="weather-temp">– °C</p>
+            <p id="weather-desc">–</p>
         </div>
-        <div class="card-body">
-          <div id="sea-state" class="card-main-value">Učitavanje…</div>
-        </div>
-      </article>
 
-      <article class="card" data-card="transit">
-        <div class="card-header">
-          <h2>Javni prijevoz</h2>
-          <button class="card-expand">⤢</button>
+        <!-- Promet uživo -->
+        <div class="card" id="traffic-card">
+            <h3>Promet uživo</h3>
+            <p id="traffic-status">Učitavanje...</p>
         </div>
-        <div class="card-body transit-body">
-          <div class="transit-column">
-            <h3>Bus</h3>
-            <ul id="transit-bus-list" class="mini-list"></ul>
-          </div>
-          <div class="transit-column">
-            <h3>Vlak</h3>
-            <ul id="transit-train-list" class="mini-list"></ul>
-          </div>
-          <div class="transit-column">
-            <h3>Brod / trajekt</h3>
-            <ul id="transit-ferry-list" class="mini-list"></ul>
-          </div>
-        </div>
-      </article>
 
-      <article class="card" data-card="services">
-        <div class="card-header">
-          <h2>Hitne službe</h2>
-          <button class="card-expand">⤢</button>
+        <!-- Aerodromi -->
+        <div class="card" id="air-card">
+            <h3>Aerodromi</h3>
+            <p id="air-info">Učitavanje...</p>
         </div>
-        <div class="card-body">
-          <div id="emergency-status" class="card-subtext"></div>
-          <ul id="services-list" class="mini-list"></ul>
-        </div>
-      </article>
 
-      <article class="card" data-card="safety">
-        <div class="card-header">
-          <h2>Sigurnost &amp; SOS</h2>
-          <button class="card-expand">⤢</button>
+        <!-- Eventi -->
+        <div class="card" id="events-card">
+            <h3>Eventi</h3>
+            <p id="events-info">Učitavanje...</p>
         </div>
-        <div class="card-body safety-body">
-          <div class="safety-section">
-            <h3>SOS profil</h3>
-            <div id="sos-summary" class="card-subtext">Nije postavljen.</div>
-            <button id="sos-edit" class="btn-ghost small">Uredi SOS profil</button>
-          </div>
-          <div class="safety-section">
-            <h3>ICE kontakti</h3>
-            <ul id="ice-list" class="mini-list"></ul>
-          </div>
-          <div class="safety-section">
-            <h3>Brzi pozivi</h3>
-            <div class="safety-buttons">
-              <button id="call-112" class="btn-primary small">Nazovi 112</button>
-              <button id="call-911" class="btn-ghost small">Nazovi 911</button>
-            </div>
-          </div>
-        </div>
-      </article>
+    </section>
 
-      <article class="card" data-card="landmarks">
-        <div class="card-header">
-          <h2>Što posjetiti</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body">
-          <ul id="landmarks-list" class="mini-list"></ul>
-        </div>
-      </article>
-
-      <article class="card" data-card="food">
-        <div class="card-header">
-          <h2>Hrana &amp; Nightlife</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body food-body">
-          <div>
-            <h3>Restorani</h3>
-            <ul id="food-restaurants" class="mini-list"></ul>
-          </div>
-          <div>
-            <h3>Kafići</h3>
-            <ul id="food-cafes" class="mini-list"></ul>
-          </div>
-          <div>
-            <h3>Klubovi</h3>
-            <ul id="food-clubs" class="mini-list"></ul>
-          </div>
-        </div>
-      </article>
-
-      <article class="card" data-card="events">
-        <div class="card-header">
-          <h2>Eventi &amp; festivali</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body">
-          <ul id="events-list" class="mini-list"></ul>
-        </div>
-      </article>
-
-      <article class="card" data-card="extendedCity">
-        <div class="card-header">
-          <h2>Trgovine &amp; energija</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body extended-body">
-          <div>
-            <h3>Trgovine</h3>
-            <ul id="shops-list" class="mini-list"></ul>
-          </div>
-          <div>
-            <h3>Shopping centri</h3>
-            <ul id="malls-list" class="mini-list"></ul>
-          </div>
-          <div>
-            <h3>Benzinske / EV</h3>
-            <ul id="fuel-ev-list" class="mini-list"></ul>
-          </div>
-        </div>
-      </article>
-
-      <article class="card" data-card="truck">
-        <div class="card-header">
-          <h2>Truck &amp; long-haul</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body">
-          <div id="truck-info" class="card-subtext"></div>
-          <ul id="truck-restrictions" class="mini-list"></ul>
-        </div>
-      </article>
-
-      <article class="card" data-card="route">
-        <div class="card-header">
-          <h2>Brza ruta</h2>
-          <button class="card-expand">⤢</button>
-        </div>
-        <div class="card-body">
-          <form id="route-form" class="route-form">
-            <input type="text" id="route-from" placeholder="Polazak" />
-            <input type="text" id="route-to" placeholder="Odredište" />
-            <select id="route-mode">
-              <option value="car">Auto</option>
-              <option value="truck">Kamion</option>
-            </select>
-            <button type="submit" class="btn-primary small">Izračunaj</button>
-          </form>
-          <div id="route-result" class="card-subtext"></div>
-        </div>
-      </article>
-
-    </main>
-
-    <footer class="app-footer">
-      <span>© TBW AI PREMIUM NAVIGATOR</span>
-      <span>Founding concept: Dražen Halar</span>
+    <!-- ============================= -->
+    <!-- FOOTER – Ikone -->
+    <!-- ============================= -->
+    <footer class="tbw-footer">
+        <button class="footer-btn" id="edit-btn">Uredi</button>
+        <button class="footer-btn" id="select-btn">Odaberi</button>
+        <button class="footer-btn" id="save-btn">Spremi</button>
+        <button class="footer-btn" id="share-btn">Podijeli</button>
+        <button class="footer-btn" id="notif-btn">🔔</button>
     </footer>
-  </div>
 
-  <script src="app.js" defer></script>
+    <!-- ============================= -->
+    <!-- SCRIPT APP -->
+    <!-- ============================= -->
+    <script src="app.js"></script>
 </body>
 </html>
